@@ -10,6 +10,7 @@ Griff 프로젝트 모노레포. 프로젝트마다 최상위 폴더 하나를 �
 | 폴더 | 설명 | 스택 | 배포 |
 |---|---|---|---|
 | [`LivePoll/`](./LivePoll) | 실시간 행사 Live Poll·설문 솔루션. 참석자는 QR/세션 페이지로 참여하고, 행사 후 이메일 설문으로 추가 응답을 수집합니다. | Node.js · Express · Supabase | [livepoll-app.vercel.app](https://livepoll-app.vercel.app) |
+| [`LiveQnA/`](./LiveQnA) | 실시간 행사 Q&A 솔루션. 참석자는 단축 URL·QR 로 질문을 올리고 공감하며, 연사·운영자는 트랙/세션별 대시보드에서 질문을 관리합니다. | Node.js · Express · Supabase | — |
 
 ## 구조
 
@@ -17,7 +18,8 @@ Griff 프로젝트 모노레포. 프로젝트마다 최상위 폴더 하나를 �
 griff_pj/
 ├── .claude/agents/     # 프로젝트 공용 Claude Code 에이전트
 ├── .gitignore          # 공용 (시크릿 차단 규칙 포함)
-└── LivePoll/           # 프로젝트별 폴더 — 자체 package.json·vercel.json 보유
+├── LivePoll/           # 프로젝트별 폴더 — 자체 package.json·vercel.json 보유
+└── LiveQnA/            # 〃
 ```
 
 새 프로젝트는 최상위에 폴더를 만들어 추가하고, 위 표에 한 줄 넣어주세요.
@@ -45,7 +47,21 @@ npm start                    # http://localhost:8787
 | `ADMIN_CONSOLE_TOKEN` | `/admin` 콘솔 및 `/api/admin/*` 보호 토큰 |
 | `PORT` | 로컬 포트 (기본 8787) |
 
+### LiveQnA 환경변수
+
+`.env.local` 에 설정합니다. 커밋 대상이 아닙니다. 템플릿은 `LiveQnA/.env.example` 참조.
+
+| 변수 | 용도 |
+|---|---|
+| `SUPABASE_URL` | Supabase 프로젝트 URL |
+| `SUPABASE_SERVICE_ROLE_KEY` | 서버 전용. **절대 프론트엔드에 노출 금지** |
+| `ADMIN_CONSOLE_TOKEN` | `/admin` 콘솔 및 `/api/admin/*` 보호 토큰 |
+| `PORT` | 로컬 포트 (기본 8787) |
+
+anon 키는 `LiveQnA/index.html` 에 직접 들어 있습니다. anon 키는 브라우저에 공개되는 것이
+전제이며 RLS 로 보호합니다.
+
 ### 배포 참고
 
-`LivePoll/` 은 저장소 하위 폴더이므로, Vercel 프로젝트 설정에서
-**Root Directory 를 `LivePoll` 로 지정**해야 빌드가 됩니다.
+각 프로젝트는 저장소 하위 폴더이므로, Vercel 프로젝트 설정에서
+**Root Directory 를 해당 폴더(`LivePoll` / `LiveQnA`)로 지정**해야 빌드가 됩니다.

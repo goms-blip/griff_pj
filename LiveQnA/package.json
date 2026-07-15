@@ -1,0 +1,16 @@
+{
+  "name": "event-qna-admin-server",
+  "version": "1.0.0",
+  "description": "실시간 행사 Q&A 솔루션 — 관리자 백엔드 (service_role 경유, RLS 우회)",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0",
+    "dotenv": "^16.4.5",
+    "exceljs": "^4.4.0",
+    "express": "^4.19.2"
+  }
+}

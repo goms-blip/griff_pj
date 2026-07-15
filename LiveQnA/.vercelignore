@@ -1,0 +1,12 @@
+# 배포에 불필요/민감 파일 제외 (env는 Vercel 프로젝트 환경변수로 설정)
+.env
+.env.local
+.env.*.local
+*.sql
+*.md
+.claude/
+.playwright-mcp/
+.git/
+.DS_Store
+realtime_event_qna_prd_supabase_mvp_v2.md
+WORKFLOW.md
