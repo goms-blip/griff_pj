@@ -1,0 +1,2721 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Live Poll · 관리자 콘솔</title>
+  <script>
+    (function () {
+      try {
+        var stored = localStorage.getItem('lp_theme');
+        var dark = stored ? stored === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches;
+        if (dark) document.documentElement.classList.add('dark');
+      } catch (e) {}
+    })();
+  </script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: { extend: {
+        fontFamily: { sans: ['Pretendard','-apple-system','BlinkMacSystemFont','system-ui','Segoe UI','Roboto','Apple SD Gothic Neo','"Noto Sans KR"','sans-serif'] },
+        colors: {
+          ink: { 50:'#f6f7f8',100:'#eceef0',200:'#dde0e4',300:'#c3c8cf',400:'#9aa1ab',500:'#727a85',600:'#535a64',700:'#3e444c',800:'#272b31',900:'#181b1f',950:'#0e1013' },
+          accent: { 50:'#eef7f7',100:'#d6ecec',200:'#aedada',300:'#7cc1c2',400:'#4ba2a4',500:'#2f8587',600:'#236d70',700:'#1f585b',800:'#1d484b',900:'#1b3d3f',950:'#0c2324' },
+        },
+        letterSpacing: { tightish: '-0.011em' },
+      } },
+    };
+  </script>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" />
+  <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <!-- qrcode-generator@1.4.4 (MIT) — 서드파티 CDN 대신 저장소에 vendoring 후 동일 오리진에서 서빙.
+       admin 토큰이 있는 콘솔이라 CDN 변조로 인한 localStorage 토큰 탈취 위험을 원천 차단. -->
+  <script src="/vendor/qrcode.js"></script>
+  <style>
+    html { -webkit-tap-highlight-color: transparent; }
+    body, body * { transition-property: background-color, border-color, color, fill, stroke; transition-duration: 200ms; transition-timing-function: ease; }
+    @keyframes barGrow { from { width: 0; } }
+    .bar-anim { animation: barGrow 0.7s cubic-bezier(.22,1,.36,1); }
+    @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+    .fade-up { animation: fadeUp 0.3s ease both; }
+    @keyframes pulseSk { 0%,100% { opacity: 1; } 50% { opacity: .45; } }
+    .sk { animation: pulseSk 1.3s ease-in-out infinite; }
+    @keyframes slideIn { from { transform: translateX(100%); } to { transform: none; } }
+    .slide-in { animation: slideIn 0.28s cubic-bezier(.22,1,.36,1) both; }
+    @keyframes toastIn { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: none; } }
+    .toast-in { animation: toastIn 0.25s ease both; }
+    .scrollbar-thin::-webkit-scrollbar { height: 8px; width: 8px; }
+    .scrollbar-thin::-webkit-scrollbar-thumb { background: #c3c8cf; border-radius: 8px; }
+    .dark .scrollbar-thin::-webkit-scrollbar-thumb { background: #3e444c; }
+  </style>
+</head>
+<body class="bg-ink-50 dark:bg-ink-950 font-sans antialiased text-ink-800 dark:text-ink-100">
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect, useRef, useMemo, useCallback, useContext, createContext } = React;
+
+    // ========================================
+    // 🎨 ICONS — Lucide 스타일 미니멀 라인 아이콘 세트
+    //   참석자 페이지와 동일한 stroke-width(1.75)·viewBox(24)·currentColor 로 통일.
+    //   크기는 className(w-4 h-4 / w-5 h-5)으로, 색은 currentColor 로 제어.
+    // ========================================
+    function Icon({ name, className = 'w-5 h-5' }) {
+      const p = { className, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor',
+        strokeWidth: 1.75, strokeLinecap: 'round', strokeLinejoin: 'round' };
+      const paths = {
+        // 다크모드 토글
+        sun: <><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></>,
+        moon: <path d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z" />,
+        // 빈 상태 / 일반
+        inbox: <><path d="M22 12h-6l-2 3h-4l-2-3H2" /><path d="M5.5 6.5L2 12v6a2 2 0 002 2h16a2 2 0 002-2v-6l-3.5-5.5A2 2 0 0016.8 5H7.2a2 2 0 00-1.7 1.5z" /></>,
+        'clipboard-list': <><rect x="8" y="3" width="8" height="4" rx="1" /><path d="M16 5h2a2 2 0 012 2v12a2 2 0 01-2 2H6a2 2 0 01-2-2V7a2 2 0 012-2h2" /><path d="M9 12h6M9 16h6M9 12h.01M9 16h.01" /></>,
+        mic: <><path d="M12 2a3 3 0 00-3 3v6a3 3 0 006 0V5a3 3 0 00-3-3z" /><path d="M19 10v1a7 7 0 01-14 0v-1M12 18v4M8 22h8" /></>,
+        mail: <><rect x="2" y="4" width="20" height="16" rx="2" /><path d="M22 7l-10 6L2 7" /></>,
+        // 분석 카드
+        'bar-chart': <><path d="M3 3v18h18" /><rect x="7" y="11" width="3" height="6" rx="0.5" /><rect x="12.5" y="7" width="3" height="10" rx="0.5" /><rect x="18" y="13" width="3" height="4" rx="0.5" /></>,
+        vote: <><path d="M9 12l2 2 4-4" /><path d="M5 7h14a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9a2 2 0 012-2z" /><path d="M9 7V5a2 2 0 012-2h2a2 2 0 012 2v2" /></>,
+        zap: <path d="M13 2L4 14h7l-2 8 9-12h-7l2-8z" />,
+        star: <path d="M12 3l2.6 5.3 5.9.9-4.2 4.1 1 5.8L12 16.9 6.7 19.2l1-5.8L3.5 9.2l5.9-.9L12 3z" />,
+        handshake: <><path d="M11 17l-2.5 2.5a1.8 1.8 0 01-2.5-2.5L8 14.5" /><path d="M13 17l2.5 2.5a1.8 1.8 0 002.5-2.5l-3-3" /><path d="M3 11l3-3 4 3 2-1 4 1 2 2" /><path d="M22 13l-3-2M2 13l3-2" /></>,
+        award: <><circle cx="12" cy="9" r="6" /><path d="M9 14.5L8 22l4-2.5L16 22l-1-7.5" /></>,
+        // 정렬 / 체크
+        'chevron-up': <path d="M6 15l6-6 6 6" />,
+        'chevron-down': <path d="M6 9l6 6 6-6" />,
+        check: <path d="M5 12.5l4.5 4.5L19 7" />,
+        trash: <><path d="M3 6h18M8 6V4a1 1 0 011-1h6a1 1 0 011 1v2M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" /><path d="M10 11v6M14 11v6" /></>,
+        plus: <path d="M12 5v14M5 12h14" />,
+        edit: <><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4 12.5-12.5z" /></>,
+        'list-checks': <><path d="M3 6l2 2 3-3M3 14l2 2 3-3" /><path d="M13 7h8M13 15h8M13 11h8" /></>,
+        users: <><path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" /></>,
+        layers: <><path d="M12 2L2 7l10 5 10-5-10-5z" /><path d="M2 17l10 5 10-5M2 12l10 5 10-5" /></>,
+      };
+      return <svg {...p} aria-hidden="true">{paths[name]}</svg>;
+    }
+
+    // ========================================
+    // 🔌 API LAYER — 모든 데이터 접근을 한 곳에 모음
+    //   공통 래퍼 request() 가 x-admin-token 헤더 / 에러 / 401·403 처리를 일원화.
+    //   실제 백엔드(같은 오리진)에 fetch 호출. mock 아님.
+    // ========================================
+    const API_BASE_URL = '/api';
+    const TOKEN_KEY = 'lp_admin_token';
+
+    const getToken = () => localStorage.getItem(TOKEN_KEY) || '';
+    const setToken = (t) => localStorage.setItem(TOKEN_KEY, t);
+    const clearToken = () => localStorage.removeItem(TOKEN_KEY);
+
+    // 401/403 발생 시 호출될 콜백 (App 에서 주입)
+    let onUnauthorized = () => {};
+
+    class ApiError extends Error {
+      constructor(message, status) { super(message); this.status = status; }
+    }
+
+    async function request(path, opts = {}) {
+      const headers = {
+        'x-admin-token': getToken(),
+        ...(opts.body ? { 'Content-Type': 'application/json' } : {}),
+        ...(opts.headers || {}),
+      };
+      let res;
+      try {
+        res = await fetch(`${API_BASE_URL}${path}`, {
+          method: opts.method || 'GET',
+          headers,
+          body: opts.body ? JSON.stringify(opts.body) : undefined,
+        });
+      } catch (e) {
+        throw new ApiError('서버에 연결할 수 없습니다. 네트워크 또는 서버 상태를 확인해주세요.', 0);
+      }
+      if (res.status === 401 || res.status === 403) {
+        clearToken();
+        onUnauthorized();
+        throw new ApiError('인증이 만료되었거나 권한이 없습니다. 다시 로그인해주세요.', res.status);
+      }
+      if (!res.ok) {
+        let msg = `요청에 실패했습니다 (HTTP ${res.status})`;
+        try { const j = await res.json(); if (j && (j.message || j.error)) msg = j.message || j.error; } catch (e) {}
+        throw new ApiError(msg, res.status);
+      }
+      if (res.status === 204) return null;
+      const ct = res.headers.get('content-type') || '';
+      if (ct.includes('application/json')) return res.json();
+      return res.text();
+    }
+
+    // 토큰 헤더가 필요한 파일 다운로드: fetch -> blob -> a.download
+    async function download(path, fallbackName = 'download.xlsx') {
+      const res = await fetch(`${API_BASE_URL}${path}`, { headers: { 'x-admin-token': getToken() } });
+      if (res.status === 401 || res.status === 403) { clearToken(); onUnauthorized(); throw new ApiError('인증 만료', res.status); }
+      if (!res.ok) throw new ApiError(`다운로드에 실패했습니다 (HTTP ${res.status})`, res.status);
+      // Content-Disposition 파일명 추출
+      let name = fallbackName;
+      const cd = res.headers.get('content-disposition') || '';
+      const m = /filename\*?=(?:UTF-8'')?["']?([^"';]+)/i.exec(cd);
+      if (m) { try { name = decodeURIComponent(m[1]); } catch (e) { name = m[1]; } }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = name;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    const api = {
+      // ---- 읽기 ----
+      verifyToken: () => request('/admin/projects'), // 로그인 검증 겸용
+      getProjects: () => request('/admin/projects'),
+      getProject: (projectId) => request(`/admin/projects/${projectId}`),
+      getProjectPolls: (projectId) => request(`/admin/projects/${projectId}/polls`),
+      getSessionPolls: (sessionId) => request(`/admin/sessions/${sessionId}/polls`),
+      getPollResults: (pollId) => request(`/admin/polls/${pollId}/results`),
+      getRecipients: (projectId) => request(`/admin/projects/${projectId}/recipients`),
+      getAnalysis: (projectId) => request(`/admin/projects/${projectId}/analysis`),
+
+      // ---- 프로젝트 생성/수정/삭제 ----
+      createProject: (body) => request('/admin/projects', { method: 'POST', body }),
+      updateProject: (id, body) => request(`/admin/projects/${id}`, { method: 'PATCH', body }),
+      deleteProject: (id) => request(`/admin/projects/${id}`, { method: 'DELETE' }),
+
+      // ---- 세션(session) / 트랙(track) ----
+      createSession: (projectId, body) => request(`/admin/projects/${projectId}/sessions`, { method: 'POST', body }),
+      updateSession: (sessionId, body) => request(`/admin/sessions/${sessionId}`, { method: 'PATCH', body }),
+      deleteSession: (sessionId) => request(`/admin/sessions/${sessionId}`, { method: 'DELETE' }),
+      createTrack: (projectId, body) => request(`/admin/projects/${projectId}/tracks`, { method: 'POST', body }),
+      importSessions: (projectId, body) => request(`/admin/projects/${projectId}/sessions/import`, { method: 'POST', body }),
+      downloadSessionTemplate: (projectId) => download(`/admin/projects/${projectId}/sessions/import-template`, 'sessions-template.xlsx'),
+      updateTrack: (trackId, body) => request(`/admin/tracks/${trackId}`, { method: 'PATCH', body }),
+      deleteTrack: (trackId) => request(`/admin/tracks/${trackId}`, { method: 'DELETE' }),
+
+      // ---- 묶음 설문(survey) ----
+      getSurveys: (projectId) => request(`/admin/projects/${projectId}/surveys`),
+      getSurvey: (id) => request(`/admin/surveys/${id}`),
+      createSurvey: (projectId, body) => request(`/admin/projects/${projectId}/surveys`, { method: 'POST', body }),
+      generateDaySurvey: (projectId, date) => request(`/admin/projects/${projectId}/surveys/generate-day`, { method: 'POST', body: { date } }),
+      updateSurvey: (id, body) => request(`/admin/surveys/${id}`, { method: 'PATCH', body }),
+      deleteSurvey: (id) => request(`/admin/surveys/${id}`, { method: 'DELETE' }),
+      startSurvey: (id) => request(`/admin/surveys/${id}/start`, { method: 'POST' }),
+      closeSurvey: (id) => request(`/admin/surveys/${id}/close`, { method: 'POST' }),
+      getSurveyResults: (id) => request(`/admin/surveys/${id}/results`),
+      exportSurvey: (id) => download(`/admin/surveys/${id}/export`, `survey-${id}.xlsx`),
+
+      // ---- 쓰기 ----
+      createPoll: (projectId, body) => request(`/admin/projects/${projectId}/polls`, { method: 'POST', body }),
+      updatePoll: (pollId, body) => request(`/admin/polls/${pollId}`, { method: 'PATCH', body }),
+      deletePoll: (pollId) => request(`/admin/polls/${pollId}`, { method: 'DELETE' }),
+      startPoll: (pollId) => request(`/admin/polls/${pollId}/start`, { method: 'POST' }),
+      closePoll: (pollId) => request(`/admin/polls/${pollId}/close`, { method: 'POST' }),
+      duplicatePoll: (pollId) => request(`/admin/polls/${pollId}/duplicate`, { method: 'POST' }),
+      importRecipients: (projectId, csv) => request(`/admin/projects/${projectId}/recipients/import`, { method: 'POST', body: { csv } }),
+
+      // ---- 엑셀/링크 다운로드 ----
+      exportPoll: (pollId) => download(`/admin/polls/${pollId}/export`, `poll-${pollId}.xlsx`),
+      exportSessionPolls: (sessionId) => download(`/admin/sessions/${sessionId}/polls/export`, `session-${sessionId}-polls.xlsx`),
+      exportProjectPolls: (projectId) => download(`/admin/projects/${projectId}/polls/export`, `project-${projectId}-polls.xlsx`),
+      exportProjectSummary: (projectId) => download(`/admin/projects/${projectId}/polls/summary-export`, `project-${projectId}-summary.xlsx`),
+      exportRecipientLinks: (projectId) => download(`/admin/projects/${projectId}/recipients/export-links`, `project-${projectId}-links.xlsx`),
+    };
+
+    // ========================================
+    // 🔔 TOAST (전역 알림)
+    // ========================================
+    const ToastContext = createContext(null);
+    const useToast = () => useContext(ToastContext);
+
+    function ToastProvider({ children }) {
+      const [toasts, setToasts] = useState([]);
+      const push = useCallback((message, tone = 'info') => {
+        const id = Math.random().toString(36).slice(2);
+        setToasts(t => [...t, { id, message, tone }]);
+        setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), 3800);
+      }, []);
+      const toast = useMemo(() => ({
+        success: (m) => push(m, 'success'),
+        error: (m) => push(m, 'error'),
+        info: (m) => push(m, 'info'),
+      }), [push]);
+      const toneCls = {
+        success: 'bg-accent-600 dark:bg-accent-500', error: 'bg-rose-600 dark:bg-rose-500', info: 'bg-ink-800 dark:bg-ink-700',
+      };
+      const icon = {
+        success: <Icon name="check" className="w-3.5 h-3.5" />,
+        error: '!', info: 'i',
+      };
+      return (
+        <ToastContext.Provider value={toast}>
+          {children}
+          <div className="fixed top-4 right-4 z-[100] flex flex-col gap-2 w-[min(92vw,360px)]">
+            {toasts.map(t => (
+              <div key={t.id} className={`toast-in text-white text-sm font-medium px-4 py-3 rounded-xl shadow-lg flex items-start gap-2.5 ${toneCls[t.tone]}`}>
+                <span className="w-5 h-5 rounded-full bg-white/25 flex items-center justify-center text-xs font-bold shrink-0 mt-0.5">{icon[t.tone]}</span>
+                <span className="leading-snug">{t.message}</span>
+              </div>
+            ))}
+          </div>
+        </ToastContext.Provider>
+      );
+    }
+
+    // ========================================
+    // 🪝 HOOKS
+    // ========================================
+    // 데이터 fetch + refetch(silent) — silent 모드는 로딩 플래시 없이 갱신(폴링용)
+    function useAsync(fn, deps = []) {
+      const [data, setData] = useState(null);
+      const [loading, setLoading] = useState(true);
+      const [error, setError] = useState(null);
+      const fnRef = useRef(fn);
+      fnRef.current = fn;
+      const run = useCallback(async (silent = false) => {
+        if (!silent) { setLoading(true); setError(null); }
+        try {
+          const d = await fnRef.current();
+          setData(d); setError(null); return d;
+        } catch (e) {
+          if (!silent) setError(e);
+          throw e;
+        } finally {
+          if (!silent) setLoading(false);
+        }
+      }, []);
+      useEffect(() => { run().catch(() => {}); /* eslint-disable-next-line */ }, deps);
+      return { data, loading, error, refetch: run, setData };
+    }
+
+    // 다크모드 테마 (로직 외 시각 전용) — <html>.dark 클래스 + localStorage('lp_theme')
+    const THEME_KEY = 'lp_theme';
+    function useTheme() {
+      const [dark, setDark] = useState(() => document.documentElement.classList.contains('dark'));
+      const toggle = useCallback(() => {
+        setDark(prev => {
+          const next = !prev;
+          document.documentElement.classList.toggle('dark', next);
+          try { localStorage.setItem(THEME_KEY, next ? 'dark' : 'light'); } catch (e) {}
+          return next;
+        });
+      }, []);
+      return { dark, toggle };
+    }
+
+    // 해/달 토글 버튼
+    function ThemeToggle({ className = '' }) {
+      const { dark, toggle } = useTheme();
+      return (
+        <button type="button" onClick={toggle} aria-label={dark ? '라이트 모드로 전환' : '다크 모드로 전환'}
+          title={dark ? '라이트 모드' : '다크 모드'}
+          className={`w-9 h-9 rounded-xl flex items-center justify-center text-ink-500 dark:text-ink-300 hover:bg-ink-100 dark:hover:bg-ink-800 hover:text-accent-600 dark:hover:text-accent-300 transition shrink-0 ${className}`}>
+          <Icon name={dark ? 'sun' : 'moon'} className="w-5 h-5" />
+        </button>
+      );
+    }
+
+    // ========================================
+    // 🔀 ROUTER (해시 기반)
+    // ========================================
+    function useHashRoute() {
+      const parse = () => {
+        let h = window.location.hash.replace(/^#/, '');
+        if (!h.startsWith('/')) h = '/' + h;
+        return h;
+      };
+      const [path, setPath] = useState(parse());
+      useEffect(() => {
+        const on = () => setPath(parse());
+        window.addEventListener('hashchange', on);
+        return () => window.removeEventListener('hashchange', on);
+      }, []);
+      return path;
+    }
+    const navigate = (to) => { window.location.hash = to; };
+
+    // ========================================
+    // 🎨 DESIGN SYSTEM
+    // ========================================
+    function Button({ variant = 'primary', size = 'md', className = '', children, ...rest }) {
+      const base = 'inline-flex items-center justify-center gap-1.5 font-semibold rounded-xl transition active:scale-[.98] disabled:opacity-50 disabled:active:scale-100 disabled:cursor-not-allowed select-none focus:outline-none focus:ring-4 focus:ring-accent-200 dark:focus:ring-accent-900/60 whitespace-nowrap';
+      const sizes = { sm: 'text-xs px-2.5 py-1.5', md: 'text-sm px-4 py-2', lg: 'text-base px-5 py-2.5' };
+      const variants = {
+        primary: 'bg-accent-600 text-white hover:bg-accent-700 dark:bg-accent-500 dark:hover:bg-accent-400 shadow-sm shadow-accent-300/60 dark:shadow-none',
+        secondary: 'bg-white dark:bg-ink-900 text-accent-700 dark:text-accent-300 border border-accent-200 dark:border-accent-800 hover:bg-accent-50 dark:hover:bg-accent-950/40',
+        ghost: 'bg-transparent text-ink-600 dark:text-ink-300 hover:bg-ink-100 dark:hover:bg-ink-800',
+        subtle: 'bg-ink-100 dark:bg-ink-800 text-ink-700 dark:text-ink-200 hover:bg-ink-200 dark:hover:bg-ink-700',
+        danger: 'bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-300 border border-rose-200 dark:border-rose-900/60 hover:bg-rose-100 dark:hover:bg-rose-950/70',
+        success: 'bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-600 dark:hover:bg-emerald-500 shadow-sm',
+      };
+      return <button className={`${base} ${sizes[size]} ${variants[variant]} ${className}`} {...rest}>{children}</button>;
+    }
+
+    function Card({ className = '', children, ...rest }) {
+      return <div className={`bg-white dark:bg-ink-900 rounded-2xl shadow-sm ring-1 ring-ink-100 dark:ring-ink-800 ${className}`} {...rest}>{children}</div>;
+    }
+
+    function Badge({ tone = 'slate', children, className = '' }) {
+      const tones = {
+        slate: 'bg-ink-100 dark:bg-ink-800 text-ink-600 dark:text-ink-300',
+        green: 'bg-accent-100 dark:bg-accent-950/50 text-accent-700 dark:text-accent-300',
+        indigo: 'bg-accent-100 dark:bg-accent-950/50 text-accent-700 dark:text-accent-300',
+        accent: 'bg-accent-100 dark:bg-accent-950/50 text-accent-700 dark:text-accent-300',
+        amber: 'bg-amber-100 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300',
+        blue: 'bg-sky-100 dark:bg-sky-950/50 text-sky-700 dark:text-sky-300',
+        rose: 'bg-rose-100 dark:bg-rose-950/50 text-rose-700 dark:text-rose-300',
+        faint: 'bg-ink-50 dark:bg-ink-800/60 text-ink-400 dark:text-ink-500',
+      };
+      return <span className={`inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-full ${tones[tone]} ${className}`}>{children}</span>;
+    }
+
+    // 상태 배지: draft=회색, live=초록(점멸점), closed=주황, archived=연회색, scheduled=노랑
+    function StatusBadge({ status }) {
+      switch (status) {
+        case 'live': return <Badge tone="accent"><span className="w-1.5 h-1.5 rounded-full bg-accent-500 dark:bg-accent-400 animate-ping" />진행 중</Badge>;
+        case 'closed': return <Badge tone="amber">종료됨</Badge>;
+        case 'scheduled': return <Badge tone="blue">예정</Badge>;
+        case 'archived': return <Badge tone="faint">보관됨</Badge>;
+        case 'draft': return <Badge tone="slate">준비 중</Badge>;
+        default: return <Badge>{status}</Badge>;
+      }
+    }
+
+    const POLL_TYPE_META = {
+      single_choice: { label: '단일 선택', tone: 'indigo' },
+      multiple_choice: { label: '복수 선택', tone: 'blue' },
+      rating: { label: '5점 척도', tone: 'amber' },
+      short_text: { label: '주관식', tone: 'slate' },
+    };
+    function PollTypeBadge({ type }) {
+      const m = POLL_TYPE_META[type] || { label: type, tone: 'slate' };
+      return <Badge tone={m.tone}>{m.label}</Badge>;
+    }
+
+    function Spinner({ className = '' }) {
+      return (
+        <svg className={`animate-spin ${className}`} viewBox="0 0 24 24" fill="none">
+          <circle className="opacity-20" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+          <path className="opacity-90" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.4 0 0 5.4 0 12h4z" />
+        </svg>
+      );
+    }
+
+    function Field({ label, required, error, hint, children }) {
+      return (
+        <label className="block">
+          <span className="block text-sm font-semibold text-ink-700 dark:text-ink-200 mb-1.5">
+            {label}{required && <span className="text-rose-500 dark:text-rose-400 ml-0.5">*</span>}
+          </span>
+          {children}
+          {hint && !error && <span className="block text-xs text-ink-400 dark:text-ink-500 mt-1">{hint}</span>}
+          {error && <span className="block text-xs text-rose-500 dark:text-rose-400 mt-1">{error}</span>}
+        </label>
+      );
+    }
+
+    function Input({ className = '', error, ...rest }) {
+      return <input className={`w-full px-3.5 py-2.5 rounded-xl border bg-white dark:bg-ink-900 text-ink-800 dark:text-ink-100 placeholder:text-ink-400 dark:placeholder:text-ink-500 ${error ? 'border-rose-300 dark:border-rose-800 focus:ring-rose-100 dark:focus:ring-rose-950 focus:border-rose-400' : 'border-ink-200 dark:border-ink-700 focus:border-accent-500 dark:focus:border-accent-400 focus:ring-accent-100 dark:focus:ring-accent-950/60'} focus:ring-4 outline-none text-sm transition ${className}`} {...rest} />;
+    }
+    function Textarea({ className = '', error, ...rest }) {
+      return <textarea className={`w-full px-3.5 py-2.5 rounded-xl border bg-white dark:bg-ink-900 text-ink-800 dark:text-ink-100 placeholder:text-ink-400 dark:placeholder:text-ink-500 ${error ? 'border-rose-300 dark:border-rose-800 focus:ring-rose-100 dark:focus:ring-rose-950' : 'border-ink-200 dark:border-ink-700 focus:border-accent-500 dark:focus:border-accent-400 focus:ring-accent-100 dark:focus:ring-accent-950/60'} focus:ring-4 outline-none text-sm resize-none transition ${className}`} {...rest} />;
+    }
+    function Select({ className = '', children, ...rest }) {
+      return <select className={`w-full px-3.5 py-2.5 rounded-xl border border-ink-200 dark:border-ink-700 focus:border-accent-500 dark:focus:border-accent-400 focus:ring-4 focus:ring-accent-100 dark:focus:ring-accent-950/60 outline-none text-sm bg-white dark:bg-ink-900 text-ink-800 dark:text-ink-100 transition ${className}`} {...rest}>{children}</select>;
+    }
+
+    function Toggle({ checked, onChange, label, desc }) {
+      return (
+        <button type="button" onClick={() => onChange(!checked)}
+          className="w-full flex items-center justify-between gap-3 text-left">
+          <span>
+            <span className="block text-sm font-semibold text-ink-700 dark:text-ink-200">{label}</span>
+            {desc && <span className="block text-xs text-ink-400 dark:text-ink-500 mt-0.5">{desc}</span>}
+          </span>
+          <span className={`relative w-11 h-6 rounded-full transition shrink-0 ${checked ? 'bg-accent-600 dark:bg-accent-500' : 'bg-ink-300 dark:bg-ink-700'}`}>
+            <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${checked ? 'translate-x-5' : ''}`} />
+          </span>
+        </button>
+      );
+    }
+
+    function Modal({ isOpen, onClose, title, children, size = 'lg', footer }) {
+      useEffect(() => {
+        if (!isOpen) return;
+        const on = (e) => { if (e.key === 'Escape') onClose(); };
+        window.addEventListener('keydown', on);
+        document.body.style.overflow = 'hidden';
+        return () => { window.removeEventListener('keydown', on); document.body.style.overflow = ''; };
+      }, [isOpen, onClose]);
+      if (!isOpen) return null;
+      const widths = { md: 'max-w-md', lg: 'max-w-2xl', xl: 'max-w-4xl' };
+      return (
+        <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-3 sm:p-6 overflow-y-auto">
+          <div className="fixed inset-0 bg-ink-950/50 backdrop-blur-sm" onClick={onClose} />
+          <div className={`relative w-full ${widths[size]} bg-white dark:bg-ink-900 rounded-2xl shadow-2xl my-auto fade-up`}>
+            <div className="flex items-center justify-between px-5 sm:px-6 py-4 border-b border-ink-100 dark:border-ink-800">
+              <h3 className="text-base font-bold text-ink-800 dark:text-ink-100">{title}</h3>
+              <button onClick={onClose} className="w-8 h-8 rounded-lg text-ink-400 dark:text-ink-500 hover:bg-ink-100 dark:hover:bg-ink-800 hover:text-ink-600 dark:hover:text-ink-200 transition flex items-center justify-center text-xl leading-none">×</button>
+            </div>
+            <div className="px-5 sm:px-6 py-5 max-h-[68vh] overflow-y-auto scrollbar-thin">{children}</div>
+            {footer && <div className="px-5 sm:px-6 py-4 border-t border-ink-100 dark:border-ink-800 flex justify-end gap-2 bg-ink-50/60 dark:bg-ink-950/40 rounded-b-2xl">{footer}</div>}
+          </div>
+        </div>
+      );
+    }
+
+    function ConfirmDialog({ open, title, message, confirmText = '확인', tone = 'danger', onConfirm, onCancel, loading }) {
+      return (
+        <Modal isOpen={open} onClose={onCancel} title={title} size="md"
+          footer={<>
+            <Button variant="ghost" onClick={onCancel} disabled={loading}>취소</Button>
+            <Button variant={tone === 'danger' ? 'primary' : 'primary'} onClick={onConfirm} disabled={loading}
+              className={tone === 'danger' ? 'bg-rose-600 hover:bg-rose-700 dark:bg-rose-600 dark:hover:bg-rose-500 focus:ring-rose-200 dark:focus:ring-rose-900/60 shadow-rose-200 dark:shadow-none' : ''}>
+              {loading && <Spinner className="w-4 h-4" />}{confirmText}
+            </Button>
+          </>}>
+          <p className="text-sm text-ink-600 dark:text-ink-300 leading-relaxed">{message}</p>
+        </Modal>
+      );
+    }
+
+    // 공통 상태 표시 블록
+    function LoadingBlock({ rows = 3 }) {
+      return <div className="space-y-3">{Array.from({ length: rows }).map((_, i) => <div key={i} className="sk h-20 rounded-2xl bg-ink-200 dark:bg-ink-800" />)}</div>;
+    }
+    function ErrorBanner({ error, onRetry }) {
+      return (
+        <Card className="p-5 border border-rose-100 dark:border-rose-900/50 ring-rose-100 dark:ring-rose-900/40 bg-rose-50/40 dark:bg-rose-950/20">
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-xl bg-rose-100 dark:bg-rose-950/60 text-rose-500 dark:text-rose-300 flex items-center justify-center text-lg shrink-0">!</div>
+            <div className="flex-1">
+              <h3 className="font-bold text-ink-800 dark:text-ink-100 text-sm">데이터를 불러오지 못했습니다</h3>
+              <p className="text-sm text-ink-500 dark:text-ink-400 mt-0.5">{error?.message || '알 수 없는 오류가 발생했습니다.'}</p>
+              {onRetry && <Button variant="secondary" size="sm" className="mt-3" onClick={onRetry}>다시 시도</Button>}
+            </div>
+          </div>
+        </Card>
+      );
+    }
+    function EmptyState({ icon = 'inbox', title, desc, action }) {
+      return (
+        <div className="text-center py-14 px-6">
+          <div className="w-14 h-14 rounded-full bg-ink-100 dark:bg-ink-800 text-ink-400 dark:text-ink-500 flex items-center justify-center mx-auto mb-4">
+            <Icon name={icon} className="w-6 h-6" />
+          </div>
+          <h3 className="font-bold text-ink-700 dark:text-ink-200">{title}</h3>
+          {desc && <p className="text-sm text-ink-400 dark:text-ink-500 mt-1">{desc}</p>}
+          {action && <div className="mt-4">{action}</div>}
+        </div>
+      );
+    }
+
+    // ========================================
+    // 🧩 LAYOUT — 관리자 헤더 (데스크톱 우선)
+    // ========================================
+    function AdminShell({ children, onLogout, crumbs }) {
+      return (
+        <div className="min-h-screen flex flex-col">
+          <header className="sticky top-0 z-30 bg-white/90 dark:bg-ink-900/90 backdrop-blur border-b border-ink-200 dark:border-ink-800">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between gap-3">
+              <button onClick={() => navigate('/')} className="flex items-center gap-2 shrink-0">
+                <span className="w-8 h-8 rounded-xl bg-gradient-to-br from-accent-600 to-accent-500 dark:from-accent-500 dark:to-accent-400 text-white flex items-center justify-center font-bold text-sm">LP</span>
+                <span className="font-bold text-ink-800 dark:text-ink-100 hidden sm:block">Live Poll <span className="text-ink-400 dark:text-ink-500 font-medium">관리자</span></span>
+              </button>
+              <nav className="flex-1 min-w-0 flex items-center gap-1.5 text-sm text-ink-400 dark:text-ink-500 overflow-x-auto scrollbar-thin">
+                {crumbs && crumbs.map((c, i) => (
+                  <React.Fragment key={i}>
+                    {i > 0 && <span className="text-ink-300 dark:text-ink-600">/</span>}
+                    {c.to
+                      ? <button onClick={() => navigate(c.to)} className="hover:text-accent-600 dark:hover:text-accent-300 font-medium whitespace-nowrap">{c.label}</button>
+                      : <span className="text-ink-700 dark:text-ink-200 font-semibold truncate">{c.label}</span>}
+                  </React.Fragment>
+                ))}
+              </nav>
+              <div className="flex items-center gap-1 shrink-0">
+                <ThemeToggle />
+                <Button variant="ghost" size="sm" onClick={onLogout}>로그아웃</Button>
+              </div>
+            </div>
+          </header>
+          <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6">{children}</main>
+        </div>
+      );
+    }
+
+    // ========================================
+    // 📄 LOGIN
+    // ========================================
+    function LoginScreen({ onLogin }) {
+      const [token, setTokenInput] = useState('');
+      const [busy, setBusy] = useState(false);
+      const [err, setErr] = useState(null);
+      const submit = async (e) => {
+        e.preventDefault();
+        if (!token.trim()) { setErr('콘솔 토큰을 입력해주세요.'); return; }
+        setBusy(true); setErr(null);
+        setToken(token.trim());
+        try {
+          await api.verifyToken();
+          onLogin();
+        } catch (e2) {
+          clearToken();
+          setErr(e2.status === 401 || e2.status === 403 ? '유효하지 않은 토큰입니다.' : e2.message);
+        } finally { setBusy(false); }
+      };
+      return (
+        <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-ink-100 to-accent-50 dark:from-ink-950 dark:to-accent-950/40 relative">
+          <div className="absolute top-4 right-4"><ThemeToggle /></div>
+          <Card className="w-full max-w-sm p-7 fade-up">
+            <div className="flex flex-col items-center text-center mb-6">
+              <span className="w-12 h-12 rounded-2xl bg-gradient-to-br from-accent-600 to-accent-500 dark:from-accent-500 dark:to-accent-400 text-white flex items-center justify-center font-bold mb-3">LP</span>
+              <h1 className="text-lg font-bold text-ink-800 dark:text-ink-100">Live Poll 관리자 콘솔</h1>
+              <p className="text-sm text-ink-400 dark:text-ink-500 mt-1">운영자 · 연사 전용 대시보드</p>
+            </div>
+            <form onSubmit={submit} className="space-y-4">
+              <Field label="관리자 콘솔 토큰" required error={err}>
+                <Input type="password" autoFocus value={token} placeholder="콘솔 토큰을 입력하세요"
+                  onChange={e => { setTokenInput(e.target.value); setErr(null); }} />
+              </Field>
+              <Button type="submit" size="lg" className="w-full" disabled={busy}>
+                {busy && <Spinner className="w-4 h-4" />}로그인
+              </Button>
+            </form>
+            <p className="text-xs text-ink-400 dark:text-ink-500 text-center mt-5 leading-relaxed">
+              토큰은 이 브라우저에만 저장되며 모든 요청 헤더(x-admin-token)로 전송됩니다.
+            </p>
+          </Card>
+        </div>
+      );
+    }
+
+    // ========================================
+    // 📄 PROJECTS HOME  (#/)
+    // ========================================
+    // 프로젝트 상태값: 한글 문자열(준비중/진행중/종료) — 서버 스키마와 동일
+    const PROJECT_STATUS_TONE = { '진행중': 'green', active: 'green', live: 'green', '준비중': 'slate', draft: 'slate', '종료': 'amber', closed: 'amber', archived: 'faint' };
+    const PROJECT_STATUS_LABEL = { '진행중': '진행 중', active: '진행 중', live: '진행 중', '준비중': '준비 중', draft: '준비 중', '종료': '종료', closed: '종료', archived: '보관' };
+    const PROJECT_STATUSES = [
+      { value: '준비중', label: '준비 중' },
+      { value: '진행중', label: '진행 중' },
+      { value: '종료', label: '종료' },
+    ];
+
+    function ProjectsHome() {
+      const { data, loading, error, refetch } = useAsync(() => api.getProjects(), []);
+      const [creating, setCreating] = useState(false);
+      const statusTone = PROJECT_STATUS_TONE;
+      const statusLabel = PROJECT_STATUS_LABEL;
+      return (
+        <div>
+          <div className="flex items-end justify-between gap-3 mb-5">
+            <div>
+              <h1 className="text-xl font-bold text-ink-800 dark:text-ink-100">프로젝트</h1>
+              <p className="text-sm text-ink-400 dark:text-ink-500 mt-0.5">운영 중인 행사 목록</p>
+            </div>
+            <div className="flex items-center gap-2">
+              {data && <Badge tone="accent">{data.length}개 행사</Badge>}
+              <Button onClick={() => setCreating(true)}><Icon name="plus" className="w-4 h-4" />새 프로젝트</Button>
+            </div>
+          </div>
+          {creating && <ProjectFormModal onClose={() => setCreating(false)} onSaved={() => { setCreating(false); refetch().catch(() => {}); }} />}
+          {loading && <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4"><LoadingBlock rows={1} /><LoadingBlock rows={1} /><LoadingBlock rows={1} /></div>}
+          {error && <ErrorBanner error={error} onRetry={refetch} />}
+          {data && data.length === 0 && <Card><EmptyState icon="mic" title="등록된 프로젝트가 없습니다" desc="새 행사가 생성되면 이곳에 표시됩니다." /></Card>}
+          {data && data.length > 0 && (
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {data.map(p => (
+                <Card key={p.id} className="p-5 flex flex-col fade-up hover:ring-accent-200 dark:hover:ring-accent-800 transition">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <h2 className="font-bold text-ink-800 dark:text-ink-100 leading-snug truncate">{p.name}</h2>
+                      <p className="text-sm text-ink-500 dark:text-ink-400 mt-0.5 truncate">{p.client || '클라이언트 미지정'}</p>
+                    </div>
+                    <Badge tone={statusTone[p.status] || 'slate'}>{statusLabel[p.status] || p.status}</Badge>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 mt-4 text-center">
+                    {[['세션', p.session_count], ['Poll', p.poll_count], ['응답', p.response_count]].map(([k, v]) => (
+                      <div key={k} className="bg-ink-50 dark:bg-ink-800/60 rounded-xl py-2">
+                        <div className="text-lg font-extrabold text-ink-800 dark:text-ink-100 tabular-nums">{v ?? 0}</div>
+                        <div className="text-[11px] text-ink-400 dark:text-ink-500 font-medium">{k}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <Button className="w-full mt-4" onClick={() => navigate(`/project/${p.id}`)}>상세보기</Button>
+                </Card>
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // ========================================
+    // 📄 PROJECT FORM MODAL  (생성 / 수정)
+    // ========================================
+    function ProjectFormModal({ project, onClose, onSaved }) {
+      const toast = useToast();
+      const editing = !!project;
+      const [form, setForm] = useState({
+        name: project?.name || '',
+        client: project?.client || '',
+        status: project?.status || '준비중',
+      });
+      const [errors, setErrors] = useState({});
+      const [saving, setSaving] = useState(false);
+      const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+      const submit = async () => {
+        if (!form.name.trim()) { setErrors({ name: '행사명을 입력해주세요.' }); return; }
+        setSaving(true);
+        const body = { name: form.name.trim(), client: form.client.trim(), status: form.status };
+        try {
+          if (editing) { await api.updateProject(project.id, body); toast.success('프로젝트를 수정했습니다.'); }
+          else { await api.createProject(body); toast.success('새 프로젝트를 생성했습니다.'); }
+          onSaved();
+        } catch (e) { toast.error(e.message); }
+        finally { setSaving(false); }
+      };
+
+      return (
+        <Modal isOpen onClose={onClose} size="md" title={editing ? '프로젝트 수정' : '새 프로젝트'}
+          footer={<>
+            <Button variant="ghost" onClick={onClose} disabled={saving}>취소</Button>
+            <Button onClick={submit} disabled={saving}>{saving && <Spinner className="w-4 h-4" />}{editing ? '저장' : '생성'}</Button>
+          </>}>
+          <div className="space-y-5">
+            <Field label="행사명" required error={errors.name}>
+              <Input value={form.name} error={errors.name} autoFocus placeholder="예: 언리얼 페스트 서울 26"
+                onChange={e => { set('name', e.target.value); setErrors({}); }} />
+            </Field>
+            <Field label="클라이언트">
+              <Input value={form.client} placeholder="예: 에픽게임즈 코리아" onChange={e => set('client', e.target.value)} />
+            </Field>
+            <Field label="상태">
+              <Select value={form.status} onChange={e => set('status', e.target.value)}>
+                {PROJECT_STATUSES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+              </Select>
+            </Field>
+          </div>
+        </Modal>
+      );
+    }
+
+    // ========================================
+    // 🔳 QR 코드 (실시간 생성 — qrcode-generator, 클라이언트에서 즉시 그림)
+    // ========================================
+    function makeQR(text) {
+      try {
+        const qr = qrcode(0, 'M'); // 자동 크기, 오류정정 M
+        qr.addData(String(text || ''));
+        qr.make();
+        return qr.createDataURL(8, 2); // cellSize 8px, margin 2모듈
+      } catch (e) { return ''; }
+    }
+    function QRModal({ url, title, onClose }) {
+      const toast = useToast();
+      const dataUrl = useMemo(() => makeQR(url), [url]);
+      const download = () => { if (!dataUrl) return; const a = document.createElement('a'); a.href = dataUrl; a.download = `qr-${(title || 'link').replace(/[^\w가-힣-]+/g, '_').slice(0, 40)}.gif`; document.body.appendChild(a); a.click(); a.remove(); };
+      return (
+        <Modal isOpen onClose={onClose} size="sm" title="QR 코드">
+          <div className="flex flex-col items-center gap-4 py-1">
+            {title && <div className="text-sm font-semibold text-ink-700 dark:text-ink-200 text-center break-keep">{title}</div>}
+            {dataUrl
+              ? <img src={dataUrl} alt="QR" className="w-56 h-56 sm:w-64 sm:h-64 rounded-xl border border-ink-100 dark:border-ink-800 bg-white p-2" />
+              : <div className="w-56 h-56 flex items-center justify-center text-sm text-ink-400 border border-ink-100 dark:border-ink-800 rounded-xl">QR 생성 실패</div>}
+            <div className="text-xs text-ink-500 dark:text-ink-400 break-all text-center px-2">{url}</div>
+            <div className="flex gap-2 w-full">
+              <Button className="flex-1" onClick={() => { navigator.clipboard?.writeText(url).then(() => toast.success('링크를 복사했습니다.'), () => toast.error('복사 실패')); }}>링크 복사</Button>
+              <Button variant="secondary" className="flex-1" onClick={download}>QR 저장</Button>
+            </div>
+          </div>
+        </Modal>
+      );
+    }
+    // 어디서나 드롭 가능한 QR 버튼 (자체 모달 상태 포함)
+    function QRButton({ url, title, size = 'sm', variant = 'subtle', label = 'QR' }) {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <Button size={size} variant={variant} onClick={() => setOpen(true)} aria-label="QR 코드"><span className="font-mono">▦</span>{label}</Button>
+          {open && <QRModal url={url} title={title} onClose={() => setOpen(false)} />}
+        </>
+      );
+    }
+
+    // ========================================
+    // 🔢 세션 스케줄 정렬 (날짜 → 시간)  ── "8월 20일" / "11:30~12:20" 자유 텍스트 파싱
+    // ========================================
+    function sessionSortKey(s) {
+      const d = String(s.session_date || '');
+      const md = d.match(/(\d+)\s*월\s*(\d+)\s*일/);
+      let dateKey = Number.MAX_SAFE_INTEGER;
+      if (md) dateKey = parseInt(md[1], 10) * 100 + parseInt(md[2], 10);
+      else if (d) { const t = Date.parse(d); if (!isNaN(t)) dateKey = t; }
+      const tm = String(s.time_range || '').match(/(\d{1,2}):(\d{2})/);
+      const timeKey = tm ? parseInt(tm[1], 10) * 60 + parseInt(tm[2], 10) : 99999;
+      return { dateKey, timeKey };
+    }
+    function sortSessionsBySchedule(list) {
+      return [...(list || [])].sort((a, b) => {
+        const ka = sessionSortKey(a), kb = sessionSortKey(b);
+        return ka.dateKey - kb.dateKey || ka.timeKey - kb.timeKey
+          || String(a.name || a.title || '').localeCompare(String(b.name || b.title || ''), 'ko');
+      });
+    }
+
+    // ========================================
+    // 📄 SESSIONS TAB  (세션 / 트랙 관리)
+    //   getProject 로 받은 { tracks, sessions } 를 그대로 사용하고,
+    //   변경 후 onChanged() 로 상위에서 getProject refetch.
+    // ========================================
+    const TRACKLESS = '__none__';
+    function SessionsTab({ projectId, projectCode, tracks, sessions, onChanged }) {
+      const toast = useToast();
+      const [editSession, setEditSession] = useState(null); // session | {__new:true}
+      const [confirmSession, setConfirmSession] = useState(null);
+      const [deletingSession, setDeletingSession] = useState(false);
+      const [confirmTrack, setConfirmTrack] = useState(null);
+      const [deletingTrack, setDeletingTrack] = useState(false);
+      const [addingTrack, setAddingTrack] = useState(false);
+      const [trackName, setTrackName] = useState('');
+      const [savingTrack, setSavingTrack] = useState(false);
+      const trackInputRef = useRef(null);
+      const [importing, setImporting] = useState(false);
+      const sessionFileRef = useRef(null);
+      const [togglingId, setTogglingId] = useState(null);
+
+      const reload = () => onChanged && onChanged();
+      const trackById = useMemo(() => {
+        const m = {};
+        (tracks || []).forEach(t => { m[t.id] = t; });
+        return m;
+      }, [tracks]);
+      // 트랙별 대표 룸 (그 트랙 세션들에서 가장 많이 쓰인 룸을 파생)
+      const trackRoom = useMemo(() => {
+        const acc = {};
+        (sessions || []).forEach(s => {
+          if (!s.track_id || !s.room) return;
+          (acc[s.track_id] = acc[s.track_id] || {});
+          acc[s.track_id][s.room] = (acc[s.track_id][s.room] || 0) + 1;
+        });
+        const out = {};
+        Object.entries(acc).forEach(([tid, rooms]) => { out[tid] = Object.entries(rooms).sort((a, b) => b[1] - a[1])[0][0]; });
+        return out;
+      }, [sessions]);
+
+      useEffect(() => { if (addingTrack && trackInputRef.current) trackInputRef.current.focus(); }, [addingTrack]);
+
+      const submitTrack = async () => {
+        const name = trackName.trim();
+        if (!name) { toast.error('트랙 이름을 입력해주세요.'); return; }
+        setSavingTrack(true);
+        try {
+          await api.createTrack(projectId, { name });
+          toast.success('트랙을 추가했습니다.');
+          setTrackName(''); setAddingTrack(false);
+          reload();
+        } catch (e) { toast.error(e.message); }
+        finally { setSavingTrack(false); }
+      };
+
+      const doDeleteTrack = async () => {
+        setDeletingTrack(true);
+        try {
+          await api.deleteTrack(confirmTrack.id);
+          toast.success('트랙을 삭제했습니다.');
+          setConfirmTrack(null);
+          reload();
+        } catch (e) { toast.error(e.message); }
+        finally { setDeletingTrack(false); }
+      };
+
+      // 엑셀/CSV 업로드 → 세션 자동 생성
+      const onSessionFile = async (e) => {
+        const f = e.target.files?.[0];
+        if (!f) return;
+        setImporting(true);
+        try {
+          const isCsv = /\.csv$/i.test(f.name) || f.type === 'text/csv';
+          let payload;
+          if (isCsv) {
+            payload = { csv: await f.text(), filename: f.name };
+          } else {
+            const bytes = new Uint8Array(await f.arrayBuffer());
+            let bin = ''; const CH = 0x8000;
+            for (let i = 0; i < bytes.length; i += CH) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CH));
+            payload = { fileBase64: btoa(bin), filename: f.name };
+          }
+          const r = await api.importSessions(projectId, payload);
+          if (!r.imported) { toast.error('가져올 세션이 없습니다. 첫 행에 헤더(세션명 등)가 있는지 확인해주세요.'); return; }
+          const extra = r.tracksCreated?.length ? ` · 트랙 ${r.tracksCreated.length}개 자동 생성` : '';
+          const skip = r.skipped ? ` (빈 행 ${r.skipped}개 제외)` : '';
+          toast.success(`세션 ${r.imported}개를 만들었습니다${extra}.${skip}`);
+          reload();
+        } catch (err) { toast.error(err.message); }
+        finally { setImporting(false); if (sessionFileRef.current) sessionFileRef.current.value = ''; }
+      };
+
+      // 공개/비공개 즉시 토글
+      const togglePublic = async (s) => {
+        setTogglingId(s.id);
+        try {
+          await api.updateSession(s.id, { is_public: !s.is_public });
+          toast.success(!s.is_public ? `"${s.name}" 공개로 전환` : `"${s.name}" 비공개로 전환`);
+          reload();
+        } catch (e) { toast.error(e.message); }
+        finally { setTogglingId(null); }
+      };
+
+      const doDeleteSession = async () => {
+        setDeletingSession(true);
+        try {
+          await api.deleteSession(confirmSession.id);
+          toast.success('세션을 삭제했습니다.');
+          setConfirmSession(null);
+          reload();
+        } catch (e) { toast.error(e.message); }
+        finally { setDeletingSession(false); }
+      };
+
+      const list = sessions || [];
+      const [selectedDate, setSelectedDate] = useState(null);     // null = 전체 날짜
+      const [selectedTrackId, setSelectedTrackId] = useState(null); // null = 전체 트랙
+
+      // 존재하는 날짜 목록 (날짜순 정렬)
+      const dates = useMemo(() => {
+        const seen = new Map();
+        list.forEach(s => { if (s.session_date && !seen.has(s.session_date)) seen.set(s.session_date, sessionSortKey(s).dateKey); });
+        return [...seen.entries()].sort((a, b) => a[1] - b[1]).map(e => e[0]);
+      }, [list]);
+
+      // 선택 날짜로 필터 → 트랙별 그룹 (트랙 순서 유지) + 그룹 내 시간 정렬. 빈 그룹 제외.
+      const groups = useMemo(() => {
+        const src = selectedDate ? list.filter(s => s.session_date === selectedDate) : list;
+        const byTrack = new Map();
+        (tracks || []).forEach(t => byTrack.set(t.id, { id: t.id, name: t.name, items: [] }));
+        const none = { id: TRACKLESS, name: '트랙 없음', items: [] };
+        src.forEach(s => {
+          const g = (s.track_id && byTrack.has(s.track_id)) ? byTrack.get(s.track_id) : none;
+          g.items.push(s);
+        });
+        const arr = [...byTrack.values()];
+        if (none.items.length) arr.push(none);
+        arr.forEach(g => { g.items = sortSessionsBySchedule(g.items); });
+        return arr.filter(g => g.items.length > 0);
+      }, [list, tracks, selectedDate]);
+      const totalInView = groups.reduce((n, g) => n + g.items.length, 0);
+      const visibleGroups = selectedTrackId ? groups.filter(g => g.id === selectedTrackId) : groups;
+
+      return (
+        <div className="space-y-5">
+          {/* 트랙 영역 */}
+          <Card className="p-5">
+            <div className="flex items-center justify-between gap-2 mb-3">
+              <div className="flex items-center gap-2">
+                <span className="w-8 h-8 rounded-xl bg-accent-50 dark:bg-accent-950/50 text-accent-600 dark:text-accent-300 flex items-center justify-center"><Icon name="layers" className="w-4 h-4" /></span>
+                <h3 className="font-bold text-ink-800 dark:text-ink-100 text-sm">트랙</h3>
+                {(tracks || []).length > 0 && <Badge tone="slate">{tracks.length}</Badge>}
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {(tracks || []).map(t => (
+                <span key={t.id} className="inline-flex items-center gap-1.5 pl-3 pr-1.5 py-1.5 rounded-full bg-ink-100 dark:bg-ink-800 text-ink-700 dark:text-ink-200 text-sm font-semibold">
+                  {t.name}
+                  {trackRoom[t.id] && <span className="inline-flex items-center gap-1 text-xs font-medium text-ink-400 dark:text-ink-500">· 📍 {trackRoom[t.id]}</span>}
+                  <button type="button" aria-label={`${t.name} 트랙 삭제`} onClick={() => setConfirmTrack(t)}
+                    className="w-5 h-5 rounded-full flex items-center justify-center text-ink-400 dark:text-ink-500 hover:bg-rose-100 dark:hover:bg-rose-950/50 hover:text-rose-500 dark:hover:text-rose-300 transition">
+                    <Icon name="trash" className="w-3.5 h-3.5" />
+                  </button>
+                </span>
+              ))}
+              {addingTrack ? (
+                <span className="inline-flex items-center gap-1.5">
+                  <Input ref={trackInputRef} value={trackName} placeholder="트랙 이름" className="w-40 py-1.5"
+                    onChange={e => setTrackName(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); submitTrack(); } if (e.key === 'Escape') { setAddingTrack(false); setTrackName(''); } }} />
+                  <Button size="sm" onClick={submitTrack} disabled={savingTrack}>{savingTrack && <Spinner className="w-3.5 h-3.5" />}추가</Button>
+                  <Button size="sm" variant="ghost" onClick={() => { setAddingTrack(false); setTrackName(''); }} disabled={savingTrack}>취소</Button>
+                </span>
+              ) : (
+                <Button size="sm" variant="secondary" onClick={() => setAddingTrack(true)}><Icon name="plus" className="w-4 h-4" />트랙 추가</Button>
+              )}
+              {(tracks || []).length === 0 && !addingTrack && (
+                <span className="text-xs text-ink-400 dark:text-ink-500">트랙은 선택 사항입니다. 세션은 트랙 없이도 만들 수 있습니다.</span>
+              )}
+            </div>
+          </Card>
+
+          {/* 엑셀/CSV 세션 일괄 업로드 */}
+          <Card className="p-5">
+            <div className="flex items-center justify-between gap-2 mb-1">
+              <div className="flex items-center gap-2">
+                <span className="w-8 h-8 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-300 flex items-center justify-center"><Icon name="inbox" className="w-4 h-4" /></span>
+                <h3 className="font-bold text-ink-800 dark:text-ink-100 text-sm">엑셀로 세션 일괄 등록</h3>
+              </div>
+              <Button size="sm" variant="ghost" onClick={() => api.downloadSessionTemplate(projectId)}>템플릿 다운로드</Button>
+            </div>
+            <p className="text-xs text-ink-400 dark:text-ink-500 mb-3">
+              컬럼: <code className="bg-ink-100 dark:bg-ink-800 px-1 rounded">세션명, 연사, 트랙, 설명, 공개여부</code>
+              <span className="block mt-0.5">· <code className="bg-ink-100 dark:bg-ink-800 px-1 rounded">세션명</code>만 필수 · 없는 트랙은 자동 생성 · <code>.xlsx</code>/<code>.csv</code> 지원</span>
+            </p>
+            <input ref={sessionFileRef} type="file" accept=".xlsx,.xls,.csv" disabled={importing} onChange={onSessionFile}
+              className="block w-full text-xs text-ink-500 dark:text-ink-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:bg-emerald-50 dark:file:bg-emerald-950/50 file:text-emerald-700 dark:file:text-emerald-300 file:font-semibold file:text-xs hover:file:bg-emerald-100 dark:hover:file:bg-emerald-900/50 disabled:opacity-50" />
+            {importing && <div className="flex items-center gap-2 mt-2 text-xs text-ink-500 dark:text-ink-400"><Spinner className="w-4 h-4" />업로드 중…</div>}
+          </Card>
+
+          {/* 세션 목록 */}
+          <div>
+            <div className="flex items-center justify-between gap-2 mb-3">
+              <div className="flex items-center gap-2">
+                <h3 className="font-bold text-ink-800 dark:text-ink-100 text-sm">세션</h3>
+                {list.length > 0 && <Badge tone="accent">{list.length}</Badge>}
+              </div>
+              {list.length > 0 && <Button size="sm" onClick={() => setEditSession({ __new: true })}><Icon name="plus" className="w-4 h-4" />세션 만들기</Button>}
+            </div>
+
+            {list.length === 0 ? (
+              <Card><EmptyState icon="mic" title="등록된 세션이 없습니다"
+                desc="세션을 만들면 Poll·설문을 세션에 연결할 수 있습니다."
+                action={<Button onClick={() => setEditSession({ __new: true })}><Icon name="plus" className="w-4 h-4" />세션 만들기</Button>} />
+              </Card>
+            ) : (
+              <>
+                {/* 날짜 필터 */}
+                {dates.length > 0 && (
+                  <div className="mb-3">
+                    <div className="text-xs font-semibold text-ink-400 dark:text-ink-500 mb-1.5">날짜</div>
+                    <div className="flex flex-wrap gap-2">
+                      <button type="button" onClick={() => { setSelectedDate(null); setSelectedTrackId(null); }}
+                        className={`px-3.5 py-2 rounded-lg text-sm font-bold transition ${!selectedDate ? 'bg-accent-600 text-white shadow-sm' : 'bg-ink-100 dark:bg-ink-800 text-ink-600 dark:text-ink-300 hover:bg-ink-200 dark:hover:bg-ink-700'}`}>
+                        전체 날짜
+                      </button>
+                      {dates.map(d => (
+                        <button key={d} type="button" onClick={() => { setSelectedDate(d); setSelectedTrackId(null); }}
+                          className={`px-3.5 py-2 rounded-lg text-sm font-bold transition ${selectedDate === d ? 'bg-accent-600 text-white shadow-sm' : 'bg-ink-100 dark:bg-ink-800 text-ink-600 dark:text-ink-300 hover:bg-ink-200 dark:hover:bg-ink-700'}`}>
+                          📅 {d}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* 트랙 필터 */}
+                <div className="mb-4">
+                  <div className="text-xs font-semibold text-ink-400 dark:text-ink-500 mb-1.5">트랙</div>
+                  <div className="flex flex-wrap gap-2">
+                    <button type="button" onClick={() => setSelectedTrackId(null)}
+                      className={`px-3 py-1.5 rounded-full text-xs font-semibold transition ${!selectedTrackId ? 'bg-accent-600 text-white' : 'bg-ink-100 dark:bg-ink-800 text-ink-600 dark:text-ink-300 hover:bg-ink-200 dark:hover:bg-ink-700'}`}>
+                      전체 {totalInView}
+                    </button>
+                    {groups.map(g => (
+                      <button key={g.id} type="button" onClick={() => setSelectedTrackId(g.id)}
+                        className={`px-3 py-1.5 rounded-full text-xs font-semibold transition ${selectedTrackId === g.id ? 'bg-accent-600 text-white' : 'bg-ink-100 dark:bg-ink-800 text-ink-600 dark:text-ink-300 hover:bg-ink-200 dark:hover:bg-ink-700'}`}>
+                        {g.name} {g.items.length}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 트랙별 그룹 · 그룹 내 날짜→시간 정렬 */}
+                <div className="space-y-6">
+                  {visibleGroups.map(g => (
+                    <div key={g.id}>
+                      <div className="flex flex-wrap items-center gap-2 mb-2.5">
+                        <Icon name="layers" className="w-4 h-4 text-accent-500 dark:text-accent-400" />
+                        <h4 className="font-bold text-ink-700 dark:text-ink-200 text-sm">{g.name}</h4>
+                        {trackRoom[g.id] && <span className="text-xs font-semibold text-ink-500 dark:text-ink-400">📍 {trackRoom[g.id]}</span>}
+                        <Badge tone="slate">{g.items.length}</Badge>
+                        {g.id !== TRACKLESS && projectCode && (
+                          <QRButton
+                            variant="secondary"
+                            label={`QR 생성${selectedDate ? ` (${selectedDate})` : ''}`}
+                            url={`${window.location.origin}/#/e/${projectCode}?track=${g.id}${selectedDate ? `&date=${encodeURIComponent(selectedDate)}` : ''}`}
+                            title={`${g.name}${trackRoom[g.id] ? ` · 📍 ${trackRoom[g.id]}` : ''}${selectedDate ? ` · ${selectedDate}` : ' · 전체 날짜'}`}
+                          />
+                        )}
+                      </div>
+                      <div className="space-y-2.5">
+                        {g.items.map(s => {
+                          return (
+                    <div key={s.id} className="border border-ink-100 dark:border-ink-800 rounded-xl p-4 hover:border-ink-200 dark:hover:border-ink-700 transition bg-white dark:bg-ink-900 fade-up">
+                      <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                        <div className="min-w-0 flex-1">
+                          {s.room && s.room !== trackRoom[s.track_id] && (
+                            <div className="flex flex-wrap items-center gap-2 mb-1">
+                              <Badge tone="slate">📍 {s.room}</Badge>
+                            </div>
+                          )}
+                          <div className="font-semibold text-ink-800 dark:text-ink-100 truncate">{s.name}</div>
+                          <div className="text-sm text-ink-500 dark:text-ink-400 truncate flex items-center gap-1.5">
+                            {s.speaker
+                              ? <><Icon name="mic" className="w-3.5 h-3.5 shrink-0" />{s.speaker}</>
+                              : <span className="text-ink-400 dark:text-ink-500">강연자 미지정</span>}
+                          </div>
+                          {(s.session_date || s.time_range) && (
+                            <div className="text-xs text-ink-400 dark:text-ink-500 mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5">
+                              {s.session_date && <span>📅 {s.session_date}</span>}
+                              {s.time_range && <span>🕐 {s.time_range}</span>}
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button type="button" onClick={() => togglePublic(s)} disabled={togglingId === s.id}
+                            title="클릭하여 공개/비공개 전환"
+                            className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition disabled:opacity-50 ${s.is_public ? 'bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/50' : 'bg-ink-100 dark:bg-ink-800 text-ink-500 dark:text-ink-400 hover:bg-ink-200 dark:hover:bg-ink-700'}`}>
+                            {togglingId === s.id ? <Spinner className="w-3.5 h-3.5" /> : <span className={`w-2 h-2 rounded-full ${s.is_public ? 'bg-emerald-500' : 'bg-ink-400'}`} />}
+                            {s.is_public ? '공개' : '비공개'}
+                          </button>
+                          <QRButton url={`${window.location.origin}/#/s/${s.code}`} title={s.name} />
+                          <Button size="sm" variant="subtle" onClick={() => setEditSession(s)}><Icon name="edit" className="w-3.5 h-3.5" />수정</Button>
+                          <Button size="sm" variant="danger" onClick={() => setConfirmSession(s)}><Icon name="trash" className="w-3.5 h-3.5" />삭제</Button>
+                        </div>
+                      </div>
+                    </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* 세션 생성/수정 모달 */}
+          {editSession && (
+            <SessionFormModal projectId={projectId} tracks={tracks || []}
+              session={editSession.__new ? null : editSession}
+              onClose={() => setEditSession(null)}
+              onSaved={() => { setEditSession(null); reload(); }} />
+          )}
+
+          {/* 세션 삭제 확인 */}
+          <ConfirmDialog open={!!confirmSession} title="세션 삭제" tone="danger" confirmText="삭제"
+            message={confirmSession ? `"${confirmSession.name}" 세션을 삭제할까요? 세션과 연결된 Poll의 연결이 해제됩니다.` : ''}
+            loading={deletingSession}
+            onConfirm={doDeleteSession} onCancel={() => setConfirmSession(null)} />
+
+          {/* 트랙 삭제 확인 */}
+          <ConfirmDialog open={!!confirmTrack} title="트랙 삭제" tone="danger" confirmText="삭제"
+            message={confirmTrack ? `"${confirmTrack.name}" 트랙을 삭제할까요? 이 트랙에 속한 세션의 트랙 연결이 해제됩니다.` : ''}
+            loading={deletingTrack}
+            onConfirm={doDeleteTrack} onCancel={() => setConfirmTrack(null)} />
+        </div>
+      );
+    }
+
+    // ========================================
+    // 📄 SESSION FORM MODAL  (생성 / 수정)
+    // ========================================
+    function SessionFormModal({ projectId, tracks, session, onClose, onSaved }) {
+      const toast = useToast();
+      const editing = !!session;
+      const [form, setForm] = useState({
+        name: session?.name || '',
+        speaker: session?.speaker || '',
+        track_id: session?.track_id || '',
+        session_date: session?.session_date || '',
+        time_range: session?.time_range || '',
+        room: session?.room || '',
+        is_public: session?.is_public !== undefined ? session.is_public : true,
+      });
+      const [errors, setErrors] = useState({});
+      const [saving, setSaving] = useState(false);
+      const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+      const submit = async () => {
+        if (!form.name.trim()) { setErrors({ name: '세션명을 입력해주세요.' }); return; }
+        setSaving(true);
+        const body = {
+          name: form.name.trim(),
+          speaker: form.speaker.trim(),
+          track_id: form.track_id || null,
+          session_date: form.session_date.trim(),
+          time_range: form.time_range.trim(),
+          room: form.room.trim(),
+          is_public: form.is_public,
+        };
+        try {
+          if (editing) { await api.updateSession(session.id, body); toast.success('세션을 수정했습니다.'); }
+          else { await api.createSession(projectId, body); toast.success('새 세션을 만들었습니다.'); }
+          onSaved();
+        } catch (e) { toast.error(e.message); }
+        finally { setSaving(false); }
+      };
+
+      return (
+        <Modal isOpen onClose={onClose} size="md" title={editing ? '세션 수정' : '세션 만들기'}
+          footer={<>
+            <Button variant="ghost" onClick={onClose} disabled={saving}>취소</Button>
+            <Button onClick={submit} disabled={saving}>{saving && <Spinner className="w-4 h-4" />}{editing ? '저장' : '생성'}</Button>
+          </>}>
+          <div className="space-y-5">
+            <Field label="세션명" required error={errors.name}>
+              <Input value={form.name} error={errors.name} autoFocus placeholder="예: 키노트 · 오프닝 세션"
+                onChange={e => { set('name', e.target.value); setErrors({}); }} />
+            </Field>
+            <Field label="강연자">
+              <Input value={form.speaker} placeholder="예: 김민수" onChange={e => set('speaker', e.target.value)} />
+            </Field>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="날짜">
+                <Input value={form.session_date} placeholder="예: 8월 20일" onChange={e => set('session_date', e.target.value)} />
+              </Field>
+              <Field label="시간">
+                <Input value={form.time_range} placeholder="예: 11:30~12:20" onChange={e => set('time_range', e.target.value)} />
+              </Field>
+            </div>
+            <Field label="세션룸">
+              <Input value={form.room} placeholder="예: Harmony Ballroom 1" onChange={e => set('room', e.target.value)} />
+            </Field>
+            <Field label="트랙" hint="이 프로젝트의 트랙 중에서 선택하거나 '없음'으로 둘 수 있습니다.">
+              <Select value={form.track_id} onChange={e => set('track_id', e.target.value)}>
+                <option value="">없음</option>
+                {tracks.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </Select>
+            </Field>
+            <div className="bg-ink-50 dark:bg-ink-800/60 rounded-xl p-4">
+              <Toggle checked={form.is_public} onChange={v => set('is_public', v)} label="공개 여부" desc="참석자가 코드/링크로 세션에 접근할 수 있습니다." />
+            </div>
+          </div>
+        </Modal>
+      );
+    }
+
+    // ========================================
+    // 🧩 POLL ROW  (프로젝트 상세 Poll 목록의 한 행)
+    // ========================================
+    function PollRow({ poll, onAction, onResults, busyAction }) {
+      const isLive = poll.status === 'live';
+      const isClosed = poll.status === 'closed';
+      const Btn = ({ act, children, variant = 'subtle' }) => (
+        <Button size="sm" variant={variant} disabled={busyAction === act}
+          onClick={() => onAction(act, poll)}>
+          {busyAction === act && <Spinner className="w-3.5 h-3.5" />}{children}
+        </Button>
+      );
+      return (
+        <div className="border border-ink-100 dark:border-ink-800 rounded-xl p-4 hover:border-ink-200 dark:hover:border-ink-700 transition bg-white dark:bg-ink-900">
+          <div className="flex flex-col lg:flex-row lg:items-center gap-3">
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2 mb-1">
+                <PollTypeBadge type={poll.poll_type} />
+                <StatusBadge status={poll.status} />
+                {poll.is_public === false && <Badge tone="slate">비공개</Badge>}
+                {poll.show_results ? <Badge tone="accent">결과 공개</Badge> : <Badge tone="slate">결과 비공개</Badge>}
+              </div>
+              <div className="font-semibold text-ink-800 dark:text-ink-100 truncate">{poll.title}</div>
+              <div className="text-sm text-ink-500 dark:text-ink-400 truncate">{poll.question}</div>
+            </div>
+            <div className="flex items-center gap-3 shrink-0">
+              <div className="text-center px-3 hidden sm:block">
+                <div className="text-base font-extrabold text-ink-800 dark:text-ink-100 tabular-nums">{poll.response_count ?? 0}</div>
+                <div className="text-[11px] text-ink-400 dark:text-ink-500">응답</div>
+              </div>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-1.5 mt-3 pt-3 border-t border-ink-50 dark:border-ink-800">
+            <Button size="sm" variant="secondary" onClick={() => onResults(poll)}>결과보기</Button>
+            <QRButton url={`${window.location.origin}/#/poll/${poll.code}`} title={poll.title} variant="secondary" label="참여 QR" />
+            {isLive
+              ? <Btn act="close" variant="danger">종료</Btn>
+              : <Btn act="start" variant="success">{isClosed ? '재시작' : '시작'}</Btn>}
+            <Btn act="toggleResults">{poll.show_results ? '결과 비공개' : '결과 공개'}</Btn>
+            <Btn act="edit">수정</Btn>
+            <Btn act="duplicate">복제</Btn>
+            <Btn act="export">엑셀</Btn>
+            <Btn act="delete" variant="danger">삭제</Btn>
+          </div>
+        </div>
+      );
+    }
+
+    // ========================================
+    // 📄 SESSION-POLLS TAB  (세션 중심 Poll 관리)
+    //   모든 세션을 날짜/트랙별로 보여주고, 각 세션에 문제(Poll)를 추가.
+    // ========================================
+    function SessionPollsTab({ sessions, tracks, livePolls, onNewForSession, onNewProject, onAction, onResults, rowBusyKey }) {
+      const [selectedDate, setSelectedDate] = useState(null);
+      const [selectedTrackId, setSelectedTrackId] = useState(null);
+
+      const pollsBySession = useMemo(() => {
+        const m = {};
+        (livePolls || []).forEach(p => { const k = p.session_id || '__none'; (m[k] = m[k] || []).push(p); });
+        return m;
+      }, [livePolls]);
+      const trackRoom = useMemo(() => {
+        const acc = {};
+        (sessions || []).forEach(s => { if (!s.track_id || !s.room) return; (acc[s.track_id] = acc[s.track_id] || {}); acc[s.track_id][s.room] = (acc[s.track_id][s.room] || 0) + 1; });
+        const out = {}; Object.entries(acc).forEach(([tid, r]) => { out[tid] = Object.entries(r).sort((a, b) => b[1] - a[1])[0][0]; });
+        return out;
+      }, [sessions]);
+      const dates = useMemo(() => {
+        const seen = new Map();
+        (sessions || []).forEach(s => { if (s.session_date && !seen.has(s.session_date)) seen.set(s.session_date, sessionSortKey(s).dateKey); });
+        return [...seen.entries()].sort((a, b) => a[1] - b[1]).map(e => e[0]);
+      }, [sessions]);
+      const groups = useMemo(() => {
+        const src = selectedDate ? (sessions || []).filter(s => s.session_date === selectedDate) : (sessions || []);
+        const byTrack = new Map();
+        (tracks || []).forEach(t => byTrack.set(t.id, { id: t.id, name: t.name, items: [] }));
+        const none = { id: '__none', name: '트랙 없음', items: [] };
+        src.forEach(s => { const g = (s.track_id && byTrack.has(s.track_id)) ? byTrack.get(s.track_id) : none; g.items.push(s); });
+        const arr = [...byTrack.values()]; if (none.items.length) arr.push(none);
+        arr.forEach(g => { g.items = sortSessionsBySchedule(g.items); });
+        return arr.filter(g => g.items.length > 0);
+      }, [sessions, tracks, selectedDate]);
+      const totalInView = groups.reduce((n, g) => n + g.items.length, 0);
+      const visibleGroups = selectedTrackId ? groups.filter(g => g.id === selectedTrackId) : groups;
+      const noneList = pollsBySession['__none'] || [];
+
+      const pillCls = (active) => `px-3 py-1.5 rounded-full text-xs font-semibold transition ${active ? 'bg-accent-600 text-white' : 'bg-ink-100 dark:bg-ink-800 text-ink-600 dark:text-ink-300 hover:bg-ink-200 dark:hover:bg-ink-700'}`;
+      const datePillCls = (active) => `px-3.5 py-2 rounded-lg text-sm font-bold transition ${active ? 'bg-accent-600 text-white shadow-sm' : 'bg-ink-100 dark:bg-ink-800 text-ink-600 dark:text-ink-300 hover:bg-ink-200 dark:hover:bg-ink-700'}`;
+
+      if (!sessions || sessions.length === 0) {
+        return <Card><EmptyState icon="mic" title="먼저 세션을 만들어주세요" desc="세션 탭에서 세션을 만들거나 엑셀로 업로드하면, 여기에서 각 세션에 문제(Poll)를 추가할 수 있습니다." /></Card>;
+      }
+
+      return (
+        <div className="space-y-5">
+          {/* 날짜 필터 */}
+          {dates.length > 0 && (
+            <div>
+              <div className="text-xs font-semibold text-ink-400 dark:text-ink-500 mb-1.5">날짜</div>
+              <div className="flex flex-wrap gap-2">
+                <button type="button" onClick={() => { setSelectedDate(null); setSelectedTrackId(null); }} className={datePillCls(!selectedDate)}>전체 날짜</button>
+                {dates.map(d => <button key={d} type="button" onClick={() => { setSelectedDate(d); setSelectedTrackId(null); }} className={datePillCls(selectedDate === d)}>📅 {d}</button>)}
+              </div>
+            </div>
+          )}
+          {/* 트랙 필터 */}
+          <div>
+            <div className="text-xs font-semibold text-ink-400 dark:text-ink-500 mb-1.5">트랙</div>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" onClick={() => setSelectedTrackId(null)} className={pillCls(!selectedTrackId)}>전체 {totalInView}</button>
+              {groups.map(g => <button key={g.id} type="button" onClick={() => setSelectedTrackId(g.id)} className={pillCls(selectedTrackId === g.id)}>{g.name} {g.items.length}</button>)}
+            </div>
+          </div>
+
+          {/* 트랙별 → 세션별 → 문제 */}
+          <div className="space-y-6">
+            {visibleGroups.map(g => (
+              <div key={g.id}>
+                <div className="flex flex-wrap items-center gap-2 mb-2.5">
+                  <Icon name="layers" className="w-4 h-4 text-accent-500 dark:text-accent-400" />
+                  <h4 className="font-bold text-ink-700 dark:text-ink-200 text-sm">{g.name}</h4>
+                  {trackRoom[g.id] && <span className="text-xs font-semibold text-ink-500 dark:text-ink-400">📍 {trackRoom[g.id]}</span>}
+                </div>
+                <div className="space-y-3">
+                  {g.items.map(s => {
+                    const sp = pollsBySession[s.id] || [];
+                    return (
+                      <div key={s.id} className="border border-ink-100 dark:border-ink-800 rounded-xl p-4 bg-white dark:bg-ink-900">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="min-w-0 flex items-center gap-2">
+                            {s.time_range && <span className="text-xs font-semibold text-ink-400 dark:text-ink-500 tabular-nums shrink-0">🕐 {s.time_range}</span>}
+                            <span className="font-semibold text-ink-800 dark:text-ink-100 truncate">{s.name}</span>
+                            {s.speaker && <span className="text-xs text-ink-400 dark:text-ink-500 truncate">· {s.speaker}</span>}
+                            <Badge tone={sp.length ? 'accent' : 'slate'}>{sp.length}</Badge>
+                          </div>
+                          <Button size="sm" variant="secondary" onClick={() => onNewForSession(s.id)}><Icon name="plus" className="w-3.5 h-3.5" />문제 만들기</Button>
+                        </div>
+                        {sp.length > 0 ? (
+                          <div className="space-y-2.5 mt-3 pl-3 border-l-2 border-ink-100 dark:border-ink-800">
+                            {sp.map(p => <PollRow key={p.id} poll={p} onAction={onAction} onResults={onResults} busyAction={rowBusyKey(p)} />)}
+                          </div>
+                        ) : (
+                          <div className="text-xs text-ink-400 dark:text-ink-500 mt-2 pl-1">아직 문제가 없습니다. “문제 만들기”로 추가하세요.</div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* 세션 미지정 Poll */}
+          {noneList.length > 0 && (
+            <div>
+              <div className="flex items-center gap-2 mb-2.5">
+                <h4 className="font-bold text-ink-700 dark:text-ink-200 text-sm">세션 미지정</h4>
+                <Badge tone="slate">{noneList.length}</Badge>
+              </div>
+              <div className="space-y-2.5">
+                {noneList.map(p => <PollRow key={p.id} poll={p} onAction={onAction} onResults={onResults} busyAction={rowBusyKey(p)} />)}
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // ========================================
+    // 📄 PROJECT DETAIL  (#/project/:projectId)
+    // ========================================
+    function ProjectDetail({ projectId }) {
+      const toast = useToast();
+      const tabFromHash = () => {
+        const m = /[?&]tab=([^&]+)/.exec(window.location.hash);
+        return m ? m[1] : 'sessions';
+      };
+      const [tab, setTab] = useState(tabFromHash());
+      const proj = useAsync(() => api.getProject(projectId), [projectId]);
+      const polls = useAsync(() => api.getProjectPolls(projectId), [projectId]);
+      const [busyAction, setBusyAction] = useState(null);
+      const [editPoll, setEditPoll] = useState(null);   // poll | {} (new)
+      const [editSource, setEditSource] = useState('live_event');
+      const [resultsPoll, setResultsPoll] = useState(null);
+      const [confirm, setConfirm] = useState(null); // {poll, type}
+      const [editProject, setEditProject] = useState(false);
+      const [deleteProjectOpen, setDeleteProjectOpen] = useState(false);
+      const [deletingProject, setDeletingProject] = useState(false);
+      const [newSurvey, setNewSurvey] = useState(false);
+
+      const reloadPolls = () => polls.refetch().catch(() => {});
+
+      const doDeleteProject = async () => {
+        setDeletingProject(true);
+        try {
+          await api.deleteProject(projectId);
+          toast.success('프로젝트를 삭제했습니다.');
+          navigate('/');
+        } catch (e) { toast.error(e.message); setDeletingProject(false); }
+      };
+
+      const handleAction = async (act, poll) => {
+        if (act === 'edit') { setEditSource(poll.source_type); setEditPoll(poll); return; }
+        if (act === 'delete') { setConfirm({ poll, type: 'delete' }); return; }
+        const key = act + ':' + poll.id;
+        setBusyAction(key);
+        try {
+          if (act === 'start') { await api.startPoll(poll.id); toast.success('Poll을 시작했습니다.'); }
+          else if (act === 'close') { await api.closePoll(poll.id); toast.success('Poll을 종료했습니다.'); }
+          else if (act === 'duplicate') { await api.duplicatePoll(poll.id); toast.success('복제본(draft)을 생성했습니다.'); }
+          else if (act === 'toggleResults') { await api.updatePoll(poll.id, { show_results: !poll.show_results }); toast.success(poll.show_results ? '결과를 비공개로 전환했습니다.' : '결과를 공개했습니다.'); }
+          else if (act === 'export') { await api.exportPoll(poll.id); toast.success('엑셀 다운로드를 시작합니다.'); }
+          if (act !== 'export') reloadPolls();
+        } catch (e) { toast.error(e.message); }
+        finally { setBusyAction(null); }
+      };
+      // PollRow는 act(접미사 없는)만 받으므로 래핑
+      const rowAction = (act, poll) => handleAction(act, poll);
+      const rowBusyKey = (poll) => {
+        const k = busyAction || '';
+        return k.endsWith(':' + poll.id) ? k.split(':')[0] : null;
+      };
+
+      const doDelete = async () => {
+        const poll = confirm.poll;
+        setBusyAction('delete:' + poll.id);
+        try { await api.deletePoll(poll.id); toast.success('Poll을 삭제했습니다.'); reloadPolls(); setConfirm(null); }
+        catch (e) { toast.error(e.message); }
+        finally { setBusyAction(null); }
+      };
+
+      const openNew = (source, sessionId) => { setEditSource(source); setEditPoll({ __new: true, session_id: sessionId || '' }); };
+
+      const onSaved = () => { setEditPoll(null); reloadPolls(); };
+
+      const allPolls = polls.data || [];
+      const livePolls = allPolls.filter(p => p.source_type !== 'newsletter');
+      const newsletterPolls = allPolls.filter(p => p.source_type === 'newsletter');
+
+      // 세션별 그룹핑 (live_event)
+
+      const crumbs = [
+        { label: '프로젝트', to: '/' },
+        { label: proj.data?.name || '로딩 중...' },
+      ];
+
+      return (
+        <AdminShellCrumbWrap crumbs={crumbs}>
+          {/* 상단 헤더 */}
+          {proj.loading ? <div className="sk h-16 rounded-2xl bg-ink-200 dark:bg-ink-800 mb-5" /> : proj.error ? <ErrorBanner error={proj.error} onRetry={proj.refetch} /> : proj.data && (
+            <div className="flex flex-wrap items-start justify-between gap-3 mb-5">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h1 className="text-xl font-bold text-ink-800 dark:text-ink-100">{proj.data.name}</h1>
+                  <StatusBadge status={proj.data.status === 'active' ? 'live' : proj.data.status} />
+                </div>
+                {proj.data.client && <p className="text-sm text-ink-500 dark:text-ink-400 mt-0.5">{proj.data.client}</p>}
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {tab === 'live' && <Button onClick={() => openNew('live_event')}><Icon name="plus" className="w-4 h-4" />Poll 만들기</Button>}
+                {tab === 'newsletter' && <Button onClick={() => openNew('newsletter')}><Icon name="plus" className="w-4 h-4" />뉴스레터 Poll 만들기</Button>}
+                {tab === 'survey' && <Button onClick={() => setNewSurvey(true)}><Icon name="plus" className="w-4 h-4" />설문 만들기</Button>}
+                <QRButton url={`${window.location.origin}/#/e/${proj.data.code}`} title={`${proj.data.name} 참석자 페이지`} variant="secondary" size="md" label="행사 QR" />
+                <Button variant="ghost" size="md" onClick={() => setEditProject(true)} aria-label="프로젝트 수정"><Icon name="edit" className="w-4 h-4" />수정</Button>
+                <Button variant="danger" size="md" onClick={() => setDeleteProjectOpen(true)} aria-label="프로젝트 삭제"><Icon name="trash" className="w-4 h-4" />삭제</Button>
+              </div>
+            </div>
+          )}
+
+          {/* 탭 */}
+          <div className="flex gap-1 border-b border-ink-200 dark:border-ink-800 mb-5">
+            {[['sessions', '세션'], ['live', 'Poll'], ['newsletter', '뉴스레터 Poll'], ['survey', '설문조사'], ['analysis', '분석']].map(([k, label]) => (
+              <button key={k} onClick={() => { setTab(k); window.location.hash = `/project/${projectId}?tab=${k}`; }}
+                className={`px-4 py-2.5 text-sm font-semibold border-b-2 -mb-px transition ${tab === k ? 'border-accent-600 dark:border-accent-400 text-accent-700 dark:text-accent-300' : 'border-transparent text-ink-400 dark:text-ink-500 hover:text-ink-600 dark:hover:text-ink-300'}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {/* 탭 콘텐츠 */}
+          {tab === 'sessions' && (
+            proj.loading ? <LoadingBlock /> :
+            proj.error ? <ErrorBanner error={proj.error} onRetry={proj.refetch} /> :
+            proj.data ? <SessionsTab projectId={projectId} projectCode={proj.data.code} tracks={proj.data.tracks || []} sessions={proj.data.sessions || []} onChanged={() => proj.refetch().catch(() => {})} /> : null
+          )}
+
+          {tab === 'live' && (
+            <div>
+              <div className="flex justify-end mb-3">
+                {livePolls.length > 0 && <Button variant="secondary" size="sm" onClick={async () => { try { await api.exportProjectPolls(projectId); toast.success('전체 Poll 엑셀 다운로드를 시작합니다.'); } catch (e) { toast.error(e.message); } }}>프로젝트 전체 엑셀</Button>}
+              </div>
+              {polls.loading && <LoadingBlock />}
+              {polls.error && <ErrorBanner error={polls.error} onRetry={reloadPolls} />}
+              {polls.data && proj.data && (
+                <SessionPollsTab
+                  sessions={proj.data.sessions || []}
+                  tracks={proj.data.tracks || []}
+                  livePolls={livePolls}
+                  onNewForSession={(sid) => openNew('live_event', sid)}
+                  onNewProject={() => openNew('live_event')}
+                  onAction={rowAction}
+                  onResults={setResultsPoll}
+                  rowBusyKey={rowBusyKey}
+                />
+              )}
+            </div>
+          )}
+
+          {tab === 'newsletter' && (
+            <NewsletterTab projectId={projectId} polls={newsletterPolls} loading={polls.loading} error={polls.error}
+              onRetry={reloadPolls} onAction={rowAction} onResults={setResultsPoll} rowBusyKey={rowBusyKey}
+              onNew={() => openNew('newsletter')} />
+          )}
+
+          {tab === 'survey' && (
+            <SurveyTab projectId={projectId} sessions={proj.data?.sessions || []} newSurvey={newSurvey} onCloseNew={() => setNewSurvey(false)} />
+          )}
+
+          {tab === 'analysis' && <AnalysisTab projectId={projectId} polls={allPolls} sessions={proj.data?.sessions || []} />}
+
+          {/* 프로젝트 수정 모달 */}
+          {editProject && proj.data && (
+            <ProjectFormModal project={proj.data} onClose={() => setEditProject(false)}
+              onSaved={() => { setEditProject(false); proj.refetch().catch(() => {}); }} />
+          )}
+
+          {/* 프로젝트 삭제 확인 */}
+          <ConfirmDialog open={deleteProjectOpen} title="프로젝트 삭제" tone="danger" confirmText="삭제"
+            message={`"${proj.data?.name || ''}" 행사와 하위 세션·Poll·설문·응답이 모두 삭제됩니다. 되돌릴 수 없습니다.`}
+            loading={deletingProject}
+            onConfirm={doDeleteProject} onCancel={() => setDeleteProjectOpen(false)} />
+
+          {/* Poll 생성/수정 모달 */}
+          {editPoll && (
+            <PollFormModal projectId={projectId} sessions={proj.data?.sessions || []}
+              source={editSource} poll={editPoll.__new ? null : editPoll}
+              initialSessionId={editPoll.__new ? (editPoll.session_id || '') : ''}
+              onClose={() => setEditPoll(null)} onSaved={onSaved} />
+          )}
+
+          {/* 결과 슬라이드 패널 */}
+          {resultsPoll && <ResultsPanel poll={resultsPoll} onClose={() => setResultsPoll(null)} onChanged={reloadPolls} />}
+
+          {/* 삭제 확인 */}
+          <ConfirmDialog open={!!confirm} title="Poll 삭제" tone="danger" confirmText="삭제"
+            message={confirm ? `"${confirm.poll.title}" Poll을 삭제할까요? 수집된 응답도 함께 삭제되며 되돌릴 수 없습니다.` : ''}
+            loading={busyAction === 'delete:' + confirm?.poll?.id}
+            onConfirm={doDelete} onCancel={() => setConfirm(null)} />
+        </AdminShellCrumbWrap>
+      );
+    }
+
+    // crumbs를 상위 AdminShell에 전달하기 위한 컨텍스트
+    const CrumbContext = createContext(() => {});
+    function AdminShellCrumbWrap({ crumbs, children }) {
+      const setCrumbs = useContext(CrumbContext);
+      useEffect(() => { setCrumbs(crumbs); return () => setCrumbs(null); }, [JSON.stringify(crumbs)]);
+      return children;
+    }
+
+    // ========================================
+    // 📄 NEWSLETTER TAB
+    // ========================================
+    function NewsletterTab({ projectId, polls, loading, error, onRetry, onAction, onResults, rowBusyKey, onNew }) {
+      const toast = useToast();
+      const recip = useAsync(() => api.getRecipients(projectId), [projectId]);
+      const [csvText, setCsvText] = useState('');
+      const [importing, setImporting] = useState(false);
+      const fileRef = useRef(null);
+
+      const onFile = (e) => {
+        const f = e.target.files[0];
+        if (!f) return;
+        const reader = new FileReader();
+        reader.onload = () => setCsvText(reader.result);
+        reader.readAsText(f);
+      };
+      const doImport = async () => {
+        if (!csvText.trim()) { toast.error('CSV 내용을 입력하거나 파일을 선택해주세요.'); return; }
+        setImporting(true);
+        try {
+          const r = await api.importRecipients(projectId, csvText.trim());
+          toast.success(`${r.imported ?? (r.recipients?.length || 0)}명의 참석자를 추가했습니다.`);
+          setCsvText(''); if (fileRef.current) fileRef.current.value = '';
+          recip.refetch().catch(() => {});
+        } catch (e) { toast.error(e.message); }
+        finally { setImporting(false); }
+      };
+      const copyShare = (code) => {
+        const url = `${window.location.origin}/poll/${code}`;
+        navigator.clipboard?.writeText(url).then(() => toast.success('공유 링크를 복사했습니다.'), () => toast.error('복사에 실패했습니다.'));
+      };
+
+      return (
+        <div className="grid lg:grid-cols-3 gap-5">
+          {/* 좌: 뉴스레터 Poll 목록 */}
+          <div className="lg:col-span-2 space-y-2.5">
+            {loading && <LoadingBlock />}
+            {error && <ErrorBanner error={error} onRetry={onRetry} />}
+            {!loading && !error && polls.length === 0 && <Card><EmptyState icon="mail" title="뉴스레터 Poll이 없습니다" desc="행사 후 이메일로 발송할 설문을 만들어보세요." action={<Button onClick={onNew}>+ 뉴스레터 Poll 만들기</Button>} /></Card>}
+            {polls.map(p => (
+              <div key={p.id}>
+                <PollRow poll={p} onAction={onAction} onResults={onResults} busyAction={rowBusyKey(p)} />
+                <div className="flex justify-end mt-1 pr-1">
+                  <button onClick={() => copyShare(p.code)} className="text-xs text-accent-600 dark:text-accent-300 font-medium hover:underline">공유 링크 복사</button>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* 우: 참석자 / CSV / 링크 */}
+          <div className="space-y-4">
+            <Card className="p-5">
+              <h3 className="font-bold text-ink-800 dark:text-ink-100 text-sm mb-1">참석자 CSV 업로드</h3>
+              <p className="text-xs text-ink-400 dark:text-ink-500 mb-3">형식: <code className="bg-ink-100 dark:bg-ink-800 px-1 rounded">email,name,company,title</code></p>
+              <input ref={fileRef} type="file" accept=".csv,text/csv" onChange={onFile}
+                className="block w-full text-xs text-ink-500 dark:text-ink-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:bg-accent-50 dark:file:bg-accent-950/50 file:text-accent-700 dark:file:text-accent-300 file:font-semibold file:text-xs hover:file:bg-accent-100 dark:hover:file:bg-accent-900/50 mb-2" />
+              <Textarea rows={4} value={csvText} onChange={e => setCsvText(e.target.value)}
+                placeholder={'email,name,company,title\nkim@acme.com,김민수,Acme,팀장'} className="font-mono text-xs" />
+              <Button className="w-full mt-3" disabled={importing} onClick={doImport}>
+                {importing && <Spinner className="w-4 h-4" />}참석자 가져오기
+              </Button>
+            </Card>
+
+            <Card className="p-5">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="font-bold text-ink-800 dark:text-ink-100 text-sm">참석자 {recip.data ? `(${recip.data.length})` : ''}</h3>
+                <Button variant="secondary" size="sm" onClick={async () => { try { await api.exportRecipientLinks(projectId); toast.success('개인별 링크 다운로드를 시작합니다.'); } catch (e) { toast.error(e.message); } }}>개인별 링크 다운로드</Button>
+              </div>
+              {recip.loading && <div className="space-y-2">{[0, 1, 2].map(i => <div key={i} className="sk h-9 rounded-lg bg-ink-100 dark:bg-ink-800" />)}</div>}
+              {recip.error && <p className="text-xs text-rose-500 dark:text-rose-400">{recip.error.message}</p>}
+              {recip.data && recip.data.length === 0 && <p className="text-xs text-ink-400 dark:text-ink-500 text-center py-4">등록된 참석자가 없습니다.</p>}
+              {recip.data && recip.data.length > 0 && (
+                <div className="max-h-72 overflow-y-auto scrollbar-thin -mx-1">
+                  <table className="w-full text-xs">
+                    <thead className="text-ink-400 dark:text-ink-500 text-left sticky top-0 bg-white dark:bg-ink-900">
+                      <tr><th className="py-1.5 px-1 font-semibold">이름</th><th className="py-1.5 px-1 font-semibold">이메일</th><th className="py-1.5 px-1 font-semibold">회사</th></tr>
+                    </thead>
+                    <tbody>
+                      {recip.data.map(r => (
+                        <tr key={r.id} className="border-t border-ink-50 dark:border-ink-800">
+                          <td className="py-1.5 px-1 font-medium text-ink-700 dark:text-ink-200 whitespace-nowrap">{r.name}</td>
+                          <td className="py-1.5 px-1 text-ink-500 dark:text-ink-400 truncate max-w-[120px]">{r.email}</td>
+                          <td className="py-1.5 px-1 text-ink-400 dark:text-ink-500 truncate max-w-[80px]">{r.company}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Card>
+          </div>
+        </div>
+      );
+    }
+
+    // ========================================
+    // 📄 ANALYSIS TAB  (PRD 5.6.3)
+    // ========================================
+    function AnalysisTab({ projectId, polls, sessions }) {
+      const toast = useToast();
+      const { data, loading, error, refetch } = useAsync(() => api.getAnalysis(projectId), [projectId]);
+      // 세션별 집계 (문제 수 / 응답 수 / 진행중) — polls 기준. 세션 스케줄 순서 유지.
+      const sessionRows = useMemo(() => {
+        const stat = {};
+        (polls || []).forEach(p => {
+          const k = p.session_id || '__none';
+          const st = stat[k] || (stat[k] = { name: p.session_name || '', polls: 0, responses: 0, live: 0 });
+          st.polls++; st.responses += (p.response_count || 0); if (p.status === 'live') st.live++;
+        });
+        const sorted = sortSessionsBySchedule(sessions || []);
+        const rows = sorted.filter(s => stat[s.id]).map(s => ({
+          name: s.name, date: s.session_date, time: s.time_range, room: s.room, ...stat[s.id],
+        }));
+        if (stat['__none']) rows.push({ name: '세션 미지정', ...stat['__none'] });
+        return rows;
+      }, [polls, sessions]);
+      if (loading) return <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">{Array.from({ length: 6 }).map((_, i) => <div key={i} className="sk h-28 rounded-2xl bg-ink-200 dark:bg-ink-800" />)}</div>;
+      if (error) return <ErrorBanner error={error} onRetry={refetch} />;
+      if (!data) return null;
+      const cards = [
+        { label: '전체 Poll 수', value: data.total_polls, icon: 'bar-chart', tone: 'indigo' },
+        { label: '전체 응답 수', value: data.total_responses, icon: 'vote', tone: 'blue' },
+        { label: '행사 중 응답', value: data.live_responses, icon: 'zap', tone: 'green' },
+        { label: '뉴스레터 응답', value: data.newsletter_responses, icon: 'mail', tone: 'amber' },
+        { label: '만족도 평균', value: data.avg_satisfaction != null ? `${Number(data.avg_satisfaction).toFixed(1)} / 5` : '-', icon: 'star', tone: 'amber' },
+        { label: '상담 희망자', value: data.consult_count, icon: 'handshake', tone: 'rose' },
+      ];
+      const toneBg = {
+        indigo: 'bg-accent-50 dark:bg-accent-950/50 text-accent-600 dark:text-accent-300',
+        blue: 'bg-sky-50 dark:bg-sky-950/50 text-sky-600 dark:text-sky-300',
+        green: 'bg-accent-50 dark:bg-accent-950/50 text-accent-600 dark:text-accent-300',
+        amber: 'bg-amber-50 dark:bg-amber-950/50 text-amber-600 dark:text-amber-300',
+        rose: 'bg-rose-50 dark:bg-rose-950/50 text-rose-600 dark:text-rose-300',
+      };
+      return (
+        <div>
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {cards.map(c => (
+              <Card key={c.label} className="p-5 fade-up">
+                <div className="flex items-center justify-between">
+                  <span className={`w-10 h-10 rounded-xl flex items-center justify-center ${toneBg[c.tone]}`}><Icon name={c.icon} className="w-5 h-5" /></span>
+                </div>
+                <div className="text-2xl font-extrabold text-ink-800 dark:text-ink-100 mt-3 tabular-nums">{c.value ?? 0}</div>
+                <div className="text-sm text-ink-400 dark:text-ink-500 font-medium mt-0.5">{c.label}</div>
+              </Card>
+            ))}
+          </div>
+          <Card className="p-5 mt-4 fade-up">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-sm text-ink-400 dark:text-ink-500 font-medium">관심 주제 1위</div>
+                <div className="text-lg font-bold text-ink-800 dark:text-ink-100 mt-0.5">{data.top_topic || '집계된 데이터 없음'}</div>
+              </div>
+              <span className="w-12 h-12 rounded-2xl bg-accent-50 dark:bg-accent-950/50 text-accent-600 dark:text-accent-300 flex items-center justify-center"><Icon name="award" className="w-6 h-6" /></span>
+            </div>
+          </Card>
+
+          {/* 세션별 분석 */}
+          <Card className="p-5 mt-4 fade-up">
+            <h3 className="font-bold text-ink-800 dark:text-ink-100 text-sm mb-3">세션별 분석</h3>
+            {sessionRows.length === 0 ? (
+              <p className="text-xs text-ink-400 dark:text-ink-500 text-center py-4">아직 문제(Poll)가 연결된 세션이 없습니다.</p>
+            ) : (
+              <div className="overflow-x-auto scrollbar-thin -mx-1">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-ink-400 dark:text-ink-500 text-left border-b border-ink-100 dark:border-ink-800">
+                      <th className="font-semibold py-2 px-2">세션</th>
+                      <th className="font-semibold py-2 px-2 text-right tabular-nums">문제</th>
+                      <th className="font-semibold py-2 px-2 text-right tabular-nums">응답</th>
+                      <th className="font-semibold py-2 px-2 text-right">진행중</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sessionRows.map((r, i) => (
+                      <tr key={i} className="border-b border-ink-50 dark:border-ink-800/50 last:border-0">
+                        <td className="py-2 px-2">
+                          <div className="font-semibold text-ink-800 dark:text-ink-100">{r.name || '이름 없음'}</div>
+                          {(r.date || r.time || r.room) && <div className="text-xs text-ink-400 dark:text-ink-500">{[r.date, r.time, r.room].filter(Boolean).join(' · ')}</div>}
+                        </td>
+                        <td className="py-2 px-2 text-right tabular-nums text-ink-700 dark:text-ink-200">{r.polls}</td>
+                        <td className="py-2 px-2 text-right tabular-nums font-bold text-ink-800 dark:text-ink-100">{r.responses}</td>
+                        <td className="py-2 px-2 text-right">{r.live > 0 ? <Badge tone="green">진행중 {r.live}</Badge> : <span className="text-xs text-ink-300 dark:text-ink-600">-</span>}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Card>
+
+          <div className="flex flex-wrap gap-2 mt-5">
+            <Button onClick={async () => { try { await api.exportProjectPolls(projectId); toast.success('프로젝트 전체 엑셀 다운로드를 시작합니다.'); } catch (e) { toast.error(e.message); } }}>프로젝트 전체 엑셀</Button>
+            <Button variant="secondary" onClick={async () => { try { await api.exportProjectSummary(projectId); toast.success('분석 요약 엑셀 다운로드를 시작합니다.'); } catch (e) { toast.error(e.message); } }}>분석 요약 엑셀</Button>
+          </div>
+        </div>
+      );
+    }
+
+    // ========================================
+    // 📄 POLL FORM MODAL  (생성/수정 — PRD 5.2.1)
+    // ========================================
+    const POLL_TYPES = [
+      { value: 'single_choice', label: '단일 선택 (객관식)' },
+      { value: 'multiple_choice', label: '복수 선택 (객관식)' },
+      { value: 'rating', label: '5점 척도' },
+      { value: 'short_text', label: '주관식 (서술형)' },
+    ];
+
+    function PollFormModal({ projectId, sessions, source, poll, initialSessionId, onClose, onSaved }) {
+      const toast = useToast();
+      const editing = !!poll;
+      const isNewsletter = source === 'newsletter';
+      const init = poll || {};
+      const [form, setForm] = useState({
+        title: init.title || '',
+        question: init.question || '',
+        poll_type: init.poll_type || 'single_choice',
+        session_id: init.session_id || initialSessionId || '',
+        is_public: init.is_public !== undefined ? init.is_public : true,
+        show_results: init.show_results !== undefined ? init.show_results : true,
+        allow_multiple_answers: init.allow_multiple_answers || false,
+        start_status: init.status === 'live' ? 'live' : 'draft',
+        starts_at: toLocalInput(init.starts_at),
+        ends_at: toLocalInput(init.ends_at),
+        internal_memo: init.internal_memo || '',
+      });
+      const [options, setOptions] = useState(
+        (init.options && init.options.length)
+          ? init.options.map((o, i) => ({ label: o.label, value: o.value || '', sort_order: o.sort_order ?? i + 1 }))
+          : [{ label: '', value: '', sort_order: 1 }, { label: '', value: '', sort_order: 2 }]
+      );
+      const [errors, setErrors] = useState({});
+      const [saving, setSaving] = useState(false);
+
+      const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+      const isChoice = form.poll_type === 'single_choice' || form.poll_type === 'multiple_choice';
+
+      // 복수 선택 유형 변경 시 allow_multiple_answers 자동 동기화
+      useEffect(() => {
+        if (form.poll_type === 'multiple_choice') set('allow_multiple_answers', true);
+        else if (form.poll_type === 'single_choice') set('allow_multiple_answers', false);
+        // eslint-disable-next-line
+      }, [form.poll_type]);
+
+      const addOption = () => setOptions(o => [...o, { label: '', value: '', sort_order: o.length + 1 }]);
+      const removeOption = (i) => setOptions(o => o.filter((_, idx) => idx !== i).map((x, idx) => ({ ...x, sort_order: idx + 1 })));
+      const moveOption = (i, dir) => setOptions(o => {
+        const ni = i + dir;
+        if (ni < 0 || ni >= o.length) return o;
+        const copy = [...o];
+        [copy[i], copy[ni]] = [copy[ni], copy[i]];
+        return copy.map((x, idx) => ({ ...x, sort_order: idx + 1 }));
+      });
+      const setOpt = (i, k, v) => setOptions(o => o.map((x, idx) => idx === i ? { ...x, [k]: v } : x));
+
+      const validate = () => {
+        const e = {};
+        if (!form.title.trim()) e.title = 'Poll 제목을 입력해주세요.';
+        if (!form.question.trim()) e.question = '질문 문구를 입력해주세요.';
+        if (isChoice) {
+          const filled = options.filter(o => o.label.trim());
+          if (filled.length < 2) e.options = '선택지는 최소 2개 이상 입력해주세요.';
+        }
+        if (isNewsletter && form.starts_at && form.ends_at && new Date(form.ends_at) <= new Date(form.starts_at)) {
+          e.ends_at = '종료 시점은 시작 시점 이후여야 합니다.';
+        }
+        setErrors(e);
+        return Object.keys(e).length === 0;
+      };
+
+      const submit = async () => {
+        if (!validate()) { toast.error('입력값을 확인해주세요.'); return; }
+        setSaving(true);
+        const payloadOptions = isChoice
+          ? options.filter(o => o.label.trim()).map((o, i) => ({ label: o.label.trim(), value: (o.value || '').trim() || slugify(o.label, i), sort_order: i + 1 }))
+          : [];
+        const body = {
+          title: form.title.trim(),
+          question: form.question.trim(),
+          poll_type: form.poll_type,
+          session_id: form.session_id || null,
+          source_type: source,
+          is_public: form.is_public,
+          show_results: form.show_results,
+          allow_multiple_answers: form.poll_type === 'multiple_choice',
+          options: payloadOptions,
+          starts_at: isNewsletter && form.starts_at ? new Date(form.starts_at).toISOString() : null,
+          ends_at: isNewsletter && form.ends_at ? new Date(form.ends_at).toISOString() : null,
+          internal_memo: form.internal_memo.trim(),
+        };
+        try {
+          if (editing) {
+            await api.updatePoll(poll.id, body);
+            // 시작 상태 변경 처리 (draft<->live)
+            if (!isNewsletter) {
+              if (form.start_status === 'live' && poll.status !== 'live') await api.startPoll(poll.id);
+              if (form.start_status === 'draft' && poll.status === 'live') await api.closePoll(poll.id);
+            }
+            toast.success('Poll을 수정했습니다.');
+          } else {
+            const created = await api.createPoll(projectId, body);
+            if (!isNewsletter && form.start_status === 'live' && created?.id) await api.startPoll(created.id);
+            toast.success('Poll을 생성했습니다.');
+          }
+          onSaved();
+        } catch (e) { toast.error(e.message); }
+        finally { setSaving(false); }
+      };
+
+      return (
+        <Modal isOpen onClose={onClose} size="lg"
+          title={`${editing ? 'Poll 수정' : (isNewsletter ? '뉴스레터 Poll 만들기' : 'Poll 만들기')}`}
+          footer={<>
+            <Button variant="ghost" onClick={onClose} disabled={saving}>취소</Button>
+            <Button onClick={submit} disabled={saving}>{saving && <Spinner className="w-4 h-4" />}{editing ? '저장' : '생성'}</Button>
+          </>}>
+          <div className="space-y-5">
+            <Field label="Poll 제목" required error={errors.title}>
+              <Input value={form.title} error={errors.title} placeholder="예: 키노트 라이브 투표" onChange={e => set('title', e.target.value)} />
+            </Field>
+            <Field label="질문 문구" required error={errors.question}>
+              <Textarea rows={2} value={form.question} error={errors.question} placeholder="참석자에게 보여질 질문" onChange={e => set('question', e.target.value)} />
+            </Field>
+
+            <div className="grid sm:grid-cols-2 gap-4">
+              <Field label="유형" required>
+                <Select value={form.poll_type} onChange={e => set('poll_type', e.target.value)}>
+                  {POLL_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                </Select>
+              </Field>
+              <Field label="연결 대상" hint="세션을 선택하지 않으면 프로젝트 전체에 연결됩니다.">
+                <Select value={form.session_id} onChange={e => set('session_id', e.target.value)}>
+                  <option value="">프로젝트 전체</option>
+                  {sessions.map(s => <option key={s.id} value={s.id}>{s.name}{s.speaker ? ` · ${s.speaker}` : ''}</option>)}
+                </Select>
+              </Field>
+            </div>
+
+            {/* 선택지 (객관식일 때만) */}
+            {isChoice && (
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-sm font-semibold text-ink-700 dark:text-ink-200">선택지<span className="text-rose-500 dark:text-rose-400 ml-0.5">*</span></span>
+                  <Button variant="ghost" size="sm" onClick={addOption}>+ 선택지 추가</Button>
+                </div>
+                {errors.options && <p className="text-xs text-rose-500 dark:text-rose-400 mb-1.5">{errors.options}</p>}
+                <div className="space-y-2">
+                  {options.map((o, i) => (
+                    <div key={i} className="flex items-center gap-1.5">
+                      <span className="w-6 text-center text-xs text-ink-400 dark:text-ink-500 font-semibold">{i + 1}</span>
+                      <Input className="flex-1" value={o.label} placeholder={`선택지 ${i + 1}`} onChange={e => setOpt(i, 'label', e.target.value)} />
+                      <div className="flex flex-col">
+                        <button type="button" aria-label="위로 이동" onClick={() => moveOption(i, -1)} disabled={i === 0} className="w-6 h-4 flex items-center justify-center text-ink-400 dark:text-ink-500 hover:text-accent-600 dark:hover:text-accent-300 disabled:opacity-30"><Icon name="chevron-up" className="w-3.5 h-3.5" /></button>
+                        <button type="button" aria-label="아래로 이동" onClick={() => moveOption(i, 1)} disabled={i === options.length - 1} className="w-6 h-4 flex items-center justify-center text-ink-400 dark:text-ink-500 hover:text-accent-600 dark:hover:text-accent-300 disabled:opacity-30"><Icon name="chevron-down" className="w-3.5 h-3.5" /></button>
+                      </div>
+                      <button type="button" onClick={() => removeOption(i)} disabled={options.length <= 1} className="w-7 h-7 rounded-lg text-rose-400 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-950/40 disabled:opacity-30 text-lg leading-none">×</button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {form.poll_type === 'rating' && <div className="text-xs text-ink-400 dark:text-ink-500 bg-ink-50 dark:bg-ink-800/60 rounded-xl px-3.5 py-2.5">5점 척도형은 1~5점 응답을 자동 수집합니다. 별도 선택지 입력이 필요 없습니다.</div>}
+            {form.poll_type === 'short_text' && <div className="text-xs text-ink-400 dark:text-ink-500 bg-ink-50 dark:bg-ink-800/60 rounded-xl px-3.5 py-2.5">주관식형은 참석자가 자유롭게 텍스트를 입력합니다. 선택지 입력이 필요 없습니다.</div>}
+
+            {/* 토글들 */}
+            <div className="space-y-3 bg-ink-50 dark:bg-ink-800/60 rounded-xl p-4">
+              <Toggle checked={form.is_public} onChange={v => set('is_public', v)} label="공개 여부" desc="참석자가 코드/링크로 접근할 수 있습니다." />
+              <div className="border-t border-ink-200/70 dark:border-ink-700/70" />
+              <Toggle checked={form.show_results} onChange={v => set('show_results', v)} label="결과 공개" desc="참석자에게 실시간 결과를 보여줍니다." />
+            </div>
+
+            {/* 시작 상태 (live_event) / 응답 기간 (newsletter) */}
+            {!isNewsletter ? (
+              <Field label="시작 상태">
+                <div className="flex gap-2">
+                  {[['draft', '준비 중 (draft)'], ['live', '즉시 시작 (live)']].map(([v, l]) => (
+                    <button key={v} type="button" onClick={() => set('start_status', v)}
+                      className={`flex-1 px-3 py-2.5 rounded-xl border text-sm font-semibold transition ${form.start_status === v ? 'border-accent-600 dark:border-accent-400 bg-accent-50 dark:bg-accent-950/40 text-accent-700 dark:text-accent-300' : 'border-ink-200 dark:border-ink-700 text-ink-500 dark:text-ink-400 hover:border-ink-300 dark:hover:border-ink-600'}`}>
+                      {l}
+                    </button>
+                  ))}
+                </div>
+              </Field>
+            ) : (
+              <div className="grid sm:grid-cols-2 gap-4">
+                <Field label="응답 시작" hint="비워두면 즉시 시작">
+                  <Input type="datetime-local" value={form.starts_at} onChange={e => set('starts_at', e.target.value)} />
+                </Field>
+                <Field label="응답 종료" error={errors.ends_at} hint="비워두면 무기한">
+                  <Input type="datetime-local" value={form.ends_at} error={errors.ends_at} onChange={e => set('ends_at', e.target.value)} />
+                </Field>
+              </div>
+            )}
+
+            <Field label="내부 메모" hint="운영자에게만 보이는 메모입니다.">
+              <Textarea rows={2} value={form.internal_memo} placeholder="(선택)" onChange={e => set('internal_memo', e.target.value)} />
+            </Field>
+          </div>
+        </Modal>
+      );
+    }
+
+    function toLocalInput(iso) {
+      if (!iso) return '';
+      const d = new Date(iso);
+      if (isNaN(d)) return '';
+      const pad = n => String(n).padStart(2, '0');
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    }
+    function slugify(s, i) {
+      const base = s.trim().toLowerCase().replace(/[^a-z0-9가-힣]+/g, '_').replace(/^_|_$/g, '');
+      return base || `opt_${i + 1}`;
+    }
+
+    // ========================================
+    // 📄 SURVEY TAB  (묶음 설문 목록 — PRD 10.x)
+    // ========================================
+    function SurveyTab({ projectId, sessions, newSurvey, onCloseNew }) {
+      const toast = useToast();
+      const { data, loading, error, refetch } = useAsync(() => api.getSurveys(projectId), [projectId]);
+      const [busyAction, setBusyAction] = useState(null); // 'act:id'
+      const [editSurvey, setEditSurvey] = useState(null); // survey row (full fetch handled in modal)
+      const [resultsSurvey, setResultsSurvey] = useState(null);
+      const [confirm, setConfirm] = useState(null); // survey to delete
+      const [genDate, setGenDate] = useState(null); // 생성 중인 날짜
+
+      const reload = () => refetch().catch(() => {});
+
+      // 세션 날짜 목록 (날짜순) — 기본폼 생성 버튼용
+      const dates = useMemo(() => {
+        const seen = new Map();
+        (sessions || []).forEach(s => { if (s.session_date && !seen.has(s.session_date)) seen.set(s.session_date, sessionSortKey(s).dateKey); });
+        return [...seen.entries()].sort((a, b) => a[1] - b[1]).map(e => e[0]);
+      }, [sessions]);
+      const sessionCountByDate = (d) => (sessions || []).filter(s => s.session_date === d).length;
+
+      const generateDay = async (date) => {
+        setGenDate(date);
+        try {
+          const r = await api.generateDaySurvey(projectId, date);
+          toast.success(`${date} 기본 설문을 만들었습니다. (문항 ${r.question_count ?? ''}개)`);
+          reload();
+        } catch (e) { toast.error(e.message); }
+        finally { setGenDate(null); }
+      };
+
+      const handleAction = async (act, s) => {
+        if (act === 'edit') { setEditSurvey(s); return; }
+        if (act === 'delete') { setConfirm(s); return; }
+        if (act === 'results') { setResultsSurvey(s); return; }
+        const key = act + ':' + s.id;
+        setBusyAction(key);
+        try {
+          if (act === 'start') { await api.startSurvey(s.id); toast.success('설문을 시작했습니다.'); }
+          else if (act === 'close') { await api.closeSurvey(s.id); toast.success('설문을 종료했습니다.'); }
+          else if (act === 'toggleResults') { await api.updateSurvey(s.id, { show_results: !s.show_results }); toast.success(s.show_results ? '결과를 비공개로 전환했습니다.' : '결과를 공개했습니다.'); }
+          else if (act === 'export') { await api.exportSurvey(s.id); toast.success('엑셀 다운로드를 시작합니다.'); }
+          if (act !== 'export') reload();
+        } catch (e) { toast.error(e.message); }
+        finally { setBusyAction(null); }
+      };
+      const busyKey = (s) => {
+        const k = busyAction || '';
+        return k.endsWith(':' + s.id) ? k.split(':')[0] : null;
+      };
+
+      const doDelete = async () => {
+        const s = confirm;
+        setBusyAction('delete:' + s.id);
+        try { await api.deleteSurvey(s.id); toast.success('설문을 삭제했습니다.'); reload(); setConfirm(null); }
+        catch (e) { toast.error(e.message); }
+        finally { setBusyAction(null); }
+      };
+
+      const surveys = data || [];
+
+      return (
+        <div>
+          {/* 세션 기반 기본 설문 폼 자동 생성 (날짜별) */}
+          {dates.length > 0 && (
+            <Card className="p-5 mb-5">
+              <div className="flex items-center gap-2 mb-1">
+                <span className="w-8 h-8 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-300 flex items-center justify-center"><Icon name="inbox" className="w-4 h-4" /></span>
+                <h3 className="font-bold text-ink-800 dark:text-ink-100 text-sm">세션 평가 설문 기본폼 생성</h3>
+              </div>
+              <p className="text-xs text-ink-400 dark:text-ink-500 mb-3">
+                날짜를 고르면 그날 전체 세션의 <b>난이도·만족도(1~5)</b> 문항 + <b>이름·이메일·연락처</b> 입력란이 있는 설문이 자동 생성됩니다. 생성 후 문항은 자유롭게 수정할 수 있어요.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {dates.map((d, i) => (
+                  <Button key={d} variant="secondary" disabled={genDate === d} onClick={() => generateDay(d)}>
+                    {genDate === d ? <Spinner className="w-4 h-4" /> : <Icon name="plus" className="w-4 h-4" />}
+                    {i + 1}일차 · {d} 기본폼 생성 ({sessionCountByDate(d)}세션)
+                  </Button>
+                ))}
+              </div>
+            </Card>
+          )}
+
+          {loading && <LoadingBlock />}
+          {error && <ErrorBanner error={error} onRetry={reload} />}
+          {data && surveys.length === 0 && (
+            <Card><EmptyState icon="list-checks" title="등록된 설문이 없습니다"
+              desc="만족도·관심주제·상담희망을 한 번에 묻는 묶음 설문을 만들어보세요."
+              action={<Button onClick={() => setEditSurvey({ __new: true })}><Icon name="plus" className="w-4 h-4" />설문 만들기</Button>} />
+            </Card>
+          )}
+          {data && surveys.length > 0 && (
+            <div className="space-y-2.5">
+              {surveys.map(s => (
+                <SurveyRow key={s.id} survey={s} busyAction={busyKey(s)} onAction={handleAction} />
+              ))}
+            </div>
+          )}
+
+          {/* 생성 모달 (상단 + 설문 만들기 버튼) */}
+          {newSurvey && (
+            <SurveyFormModal projectId={projectId} survey={null}
+              onClose={onCloseNew} onSaved={() => { onCloseNew(); reload(); }} />
+          )}
+          {/* 빈 상태 내부 버튼으로 연 생성 모달 */}
+          {editSurvey && editSurvey.__new && (
+            <SurveyFormModal projectId={projectId} survey={null}
+              onClose={() => setEditSurvey(null)} onSaved={() => { setEditSurvey(null); reload(); }} />
+          )}
+          {/* 수정 모달 */}
+          {editSurvey && !editSurvey.__new && (
+            <SurveyFormModal projectId={projectId} survey={editSurvey}
+              onClose={() => setEditSurvey(null)} onSaved={() => { setEditSurvey(null); reload(); }} />
+          )}
+
+          {/* 결과 패널 */}
+          {resultsSurvey && <SurveyResultsPanel survey={resultsSurvey} onClose={() => setResultsSurvey(null)} onChanged={reload} />}
+
+          {/* 삭제 확인 */}
+          <ConfirmDialog open={!!confirm} title="설문 삭제" tone="danger" confirmText="삭제"
+            message={confirm ? `"${confirm.title}" 설문과 모든 문항·응답이 삭제됩니다. 되돌릴 수 없습니다.` : ''}
+            loading={busyAction === 'delete:' + confirm?.id}
+            onConfirm={doDelete} onCancel={() => setConfirm(null)} />
+        </div>
+      );
+    }
+
+    // 설문 목록의 한 행
+    function SurveyRow({ survey, busyAction, onAction }) {
+      const toast = useToast();
+      const isLive = survey.status === 'live';
+      const isClosed = survey.status === 'closed';
+      const Btn = ({ act, children, variant = 'subtle' }) => (
+        <Button size="sm" variant={variant} disabled={busyAction === act} onClick={() => onAction(act, survey)}>
+          {busyAction === act && <Spinner className="w-3.5 h-3.5" />}{children}
+        </Button>
+      );
+      const copyShare = () => {
+        const url = `${window.location.origin}/#/survey/${survey.code}`;
+        navigator.clipboard?.writeText(url).then(() => toast.success('공유 링크를 복사했습니다.'), () => toast.error('복사에 실패했습니다.'));
+      };
+      return (
+        <div className="border border-ink-100 dark:border-ink-800 rounded-xl p-4 hover:border-ink-200 dark:hover:border-ink-700 transition bg-white dark:bg-ink-900">
+          <div className="flex flex-col lg:flex-row lg:items-center gap-3">
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2 mb-1">
+                <StatusBadge status={survey.status} />
+                {survey.source_type === 'newsletter' ? <Badge tone="amber">뉴스레터</Badge> : <Badge tone="indigo">행사 현장</Badge>}
+                {survey.show_results ? <Badge tone="accent">결과 공개</Badge> : <Badge tone="slate">결과 비공개</Badge>}
+              </div>
+              <div className="font-semibold text-ink-800 dark:text-ink-100 truncate">{survey.title}</div>
+              {survey.intro && <div className="text-sm text-ink-500 dark:text-ink-400 truncate">{survey.intro}</div>}
+            </div>
+            <div className="flex items-center gap-4 shrink-0">
+              <div className="text-center px-2">
+                <div className="text-base font-extrabold text-ink-800 dark:text-ink-100 tabular-nums">{survey.question_count ?? 0}</div>
+                <div className="text-[11px] text-ink-400 dark:text-ink-500">문항</div>
+              </div>
+              <div className="text-center px-2">
+                <div className="text-base font-extrabold text-ink-800 dark:text-ink-100 tabular-nums">{survey.response_count ?? 0}</div>
+                <div className="text-[11px] text-ink-400 dark:text-ink-500">응답</div>
+              </div>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-1.5 mt-3 pt-3 border-t border-ink-50 dark:border-ink-800">
+            <Button size="sm" variant="secondary" onClick={() => onAction('results', survey)}>결과보기</Button>
+            {isLive
+              ? <Btn act="close" variant="danger">종료</Btn>
+              : <Btn act="start" variant="success">{isClosed ? '재시작' : '시작'}</Btn>}
+            <Btn act="toggleResults">{survey.show_results ? '결과 비공개' : '결과 공개'}</Btn>
+            <Btn act="edit">수정</Btn>
+            <Btn act="delete" variant="danger">삭제</Btn>
+            <Btn act="export">엑셀</Btn>
+            <Button size="sm" variant="ghost" onClick={copyShare}>공유링크 복사</Button>
+          </div>
+        </div>
+      );
+    }
+
+    // ========================================
+    // 📄 SURVEY FORM MODAL (설문 빌더 — PRD 10.6)
+    // ========================================
+    function makeQuestion(poll_type = 'single_choice') {
+      const base = { question: '', poll_type };
+      if (poll_type === 'single_choice' || poll_type === 'multiple_choice') {
+        base.options = [{ label: '' }, { label: '' }];
+      }
+      return base;
+    }
+
+    function SurveyFormModal({ projectId, survey, onClose, onSaved }) {
+      const toast = useToast();
+      const editing = !!survey;
+      // 수정 시 문항을 포함한 상세를 별도 조회 (목록 응답엔 questions 없음)
+      const detail = useAsync(() => editing ? api.getSurvey(survey.id) : Promise.resolve(null), [survey?.id]);
+      const [form, setForm] = useState({
+        title: '', intro: '', source_type: 'newsletter', show_results: true, status: 'draft',
+      });
+      const [questions, setQuestions] = useState([makeQuestion('rating')]);
+      const [hydrated, setHydrated] = useState(!editing);
+      const [errors, setErrors] = useState({});
+      const [saving, setSaving] = useState(false);
+      const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+      // 수정 모드: 상세 로드되면 폼/문항 채우기
+      useEffect(() => {
+        if (!editing) return;
+        const d = detail.data;
+        if (!d || hydrated) return;
+        setForm({
+          title: d.title || '', intro: d.intro || '',
+          source_type: d.source_type || 'newsletter',
+          show_results: !!d.show_results,
+          status: d.status === 'live' ? 'live' : 'draft',
+        });
+        setQuestions((d.questions && d.questions.length ? d.questions : [makeQuestion('rating')]).map(q => ({
+          question: q.question || '',
+          poll_type: q.poll_type || 'single_choice',
+          options: (q.options && q.options.length) ? q.options.map(o => ({ label: o.label, value: o.value })) : [{ label: '' }, { label: '' }],
+        })));
+        setHydrated(true);
+      }, [detail.data]);
+
+      // 문항 조작
+      const addQuestion = () => setQuestions(qs => [...qs, makeQuestion('single_choice')]);
+      const removeQuestion = (i) => setQuestions(qs => qs.filter((_, idx) => idx !== i));
+      const moveQuestion = (i, dir) => setQuestions(qs => {
+        const ni = i + dir;
+        if (ni < 0 || ni >= qs.length) return qs;
+        const c = [...qs]; [c[i], c[ni]] = [c[ni], c[i]]; return c;
+      });
+      const setQ = (i, patch) => setQuestions(qs => qs.map((q, idx) => {
+        if (idx !== i) return q;
+        const next = { ...q, ...patch };
+        // 유형 전환 시 선택지 초기화/제거
+        if (patch.poll_type) {
+          const isChoice = patch.poll_type === 'single_choice' || patch.poll_type === 'multiple_choice';
+          if (isChoice && (!next.options || !next.options.length)) next.options = [{ label: '' }, { label: '' }];
+          if (!isChoice) delete next.options;
+        }
+        return next;
+      }));
+      const addOpt = (qi) => setQuestions(qs => qs.map((q, idx) => idx === qi ? { ...q, options: [...(q.options || []), { label: '' }] } : q));
+      const removeOpt = (qi, oi) => setQuestions(qs => qs.map((q, idx) => idx === qi ? { ...q, options: q.options.filter((_, j) => j !== oi) } : q));
+      const setOptLabel = (qi, oi, val) => setQuestions(qs => qs.map((q, idx) => idx === qi ? { ...q, options: q.options.map((o, j) => j === oi ? { ...o, label: val } : o) } : q));
+
+      const validate = () => {
+        const e = {};
+        if (!form.title.trim()) e.title = '설문 제목을 입력해주세요.';
+        const qErrs = {};
+        questions.forEach((q, i) => {
+          if (!q.question.trim()) qErrs[i] = '질문 문구를 입력해주세요.';
+          else if ((q.poll_type === 'single_choice' || q.poll_type === 'multiple_choice')) {
+            const filled = (q.options || []).filter(o => o.label.trim());
+            if (filled.length < 2) qErrs[i] = '선택지를 최소 2개 입력해주세요.';
+          }
+        });
+        if (questions.length === 0) e.questions = '문항을 최소 1개 추가해주세요.';
+        e.q = qErrs;
+        setErrors(e);
+        return !e.title && !e.questions && Object.keys(qErrs).length === 0;
+      };
+
+      const submit = async () => {
+        if (!validate()) { toast.error('입력값을 확인해주세요.'); return; }
+        setSaving(true);
+        const body = {
+          title: form.title.trim(),
+          intro: form.intro.trim() || null,
+          source_type: form.source_type,
+          is_public: true,
+          show_results: form.show_results,
+          status: form.status,
+          questions: questions.map(q => {
+            const isChoice = q.poll_type === 'single_choice' || q.poll_type === 'multiple_choice';
+            return {
+              question: q.question.trim(),
+              poll_type: q.poll_type,
+              options: isChoice
+                ? (q.options || []).filter(o => o.label.trim()).map((o, i) => ({ label: o.label.trim(), value: (o.value || '').trim() || slugify(o.label, i) }))
+                : [],
+            };
+          }),
+        };
+        try {
+          if (editing) { await api.updateSurvey(survey.id, body); toast.success('설문을 수정했습니다.'); }
+          else { await api.createSurvey(projectId, body); toast.success('설문을 생성했습니다.'); }
+          onSaved();
+        } catch (e) { toast.error(e.message); }
+        finally { setSaving(false); }
+      };
+
+      const loadingDetail = editing && detail.loading && !hydrated;
+
+      return (
+        <Modal isOpen onClose={onClose} size="xl" title={editing ? '설문 수정' : '설문 만들기'}
+          footer={<>
+            <Button variant="ghost" onClick={onClose} disabled={saving}>취소</Button>
+            <Button onClick={submit} disabled={saving || loadingDetail}>{saving && <Spinner className="w-4 h-4" />}{editing ? '저장' : '생성'}</Button>
+          </>}>
+          {loadingDetail ? <LoadingBlock rows={4} /> : (
+            <div className="space-y-5">
+              {/* 설문 메타 */}
+              <Field label="설문 제목" required error={errors.title}>
+                <Input value={form.title} error={errors.title} autoFocus placeholder="예: 웨비나 만족도 설문"
+                  onChange={e => { set('title', e.target.value); }} />
+              </Field>
+              <Field label="안내문" hint="설문 상단에 표시되는 안내 문구입니다.">
+                <Textarea rows={2} value={form.intro} placeholder="(선택) 참여자에게 보여질 안내문" onChange={e => set('intro', e.target.value)} />
+              </Field>
+              <div className="grid sm:grid-cols-2 gap-4">
+                <Field label="발송 유형">
+                  <Select value={form.source_type} onChange={e => set('source_type', e.target.value)}>
+                    <option value="newsletter">뉴스레터 (행사 후)</option>
+                    <option value="live_event">행사 현장 (라이브)</option>
+                  </Select>
+                </Field>
+                <Field label="시작 상태">
+                  <Select value={form.status} onChange={e => set('status', e.target.value)}>
+                    <option value="draft">준비 중 (draft)</option>
+                    <option value="live">즉시 시작 (live)</option>
+                  </Select>
+                </Field>
+              </div>
+              <div className="bg-ink-50 dark:bg-ink-800/60 rounded-xl p-4">
+                <Toggle checked={form.show_results} onChange={v => set('show_results', v)} label="결과 공개" desc="응답자에게 실시간 결과를 보여줍니다." />
+              </div>
+
+              {/* 문항 빌더 */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm font-bold text-ink-700 dark:text-ink-200">문항 <span className="text-ink-400 dark:text-ink-500 font-medium">({questions.length})</span></span>
+                  <Button variant="secondary" size="sm" onClick={addQuestion}><Icon name="plus" className="w-4 h-4" />문항 추가</Button>
+                </div>
+                {errors.questions && <p className="text-xs text-rose-500 dark:text-rose-400 mb-2">{errors.questions}</p>}
+                <div className="space-y-3">
+                  {questions.map((q, i) => {
+                    const isChoice = q.poll_type === 'single_choice' || q.poll_type === 'multiple_choice';
+                    const qErr = errors.q && errors.q[i];
+                    return (
+                      <div key={i} className="border border-ink-200 dark:border-ink-700 rounded-xl p-4 bg-ink-50/40 dark:bg-ink-800/30">
+                        <div className="flex items-start gap-2 mb-3">
+                          <span className="w-6 h-6 rounded-lg bg-accent-100 dark:bg-accent-950/50 text-accent-700 dark:text-accent-300 flex items-center justify-center text-xs font-bold shrink-0 mt-1">{i + 1}</span>
+                          <div className="flex-1 min-w-0 space-y-3">
+                            <Input value={q.question} error={qErr} placeholder="질문 문구를 입력하세요"
+                              onChange={e => setQ(i, { question: e.target.value })} />
+                            <Select value={q.poll_type} onChange={e => setQ(i, { poll_type: e.target.value })} className="sm:max-w-xs">
+                              {POLL_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                            </Select>
+                            {isChoice && (
+                              <div className="space-y-2">
+                                {(q.options || []).map((o, oi) => (
+                                  <div key={oi} className="flex items-center gap-1.5">
+                                    <span className="w-5 text-center text-xs text-ink-400 dark:text-ink-500 font-semibold">{oi + 1}</span>
+                                    <Input className="flex-1" value={o.label} placeholder={`선택지 ${oi + 1}`} onChange={e => setOptLabel(i, oi, e.target.value)} />
+                                    <button type="button" onClick={() => removeOpt(i, oi)} disabled={(q.options || []).length <= 1}
+                                      className="w-7 h-7 rounded-lg text-rose-400 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-950/40 disabled:opacity-30 text-lg leading-none">×</button>
+                                  </div>
+                                ))}
+                                <Button variant="ghost" size="sm" onClick={() => addOpt(i)}>+ 선택지 추가</Button>
+                              </div>
+                            )}
+                            {q.poll_type === 'rating' && <p className="text-xs text-ink-400 dark:text-ink-500 bg-ink-100/70 dark:bg-ink-800/60 rounded-lg px-3 py-2">1~5점 척도로 자동 수집됩니다. 선택지 입력이 필요 없습니다.</p>}
+                            {q.poll_type === 'short_text' && <p className="text-xs text-ink-400 dark:text-ink-500 bg-ink-100/70 dark:bg-ink-800/60 rounded-lg px-3 py-2">참여자가 자유롭게 텍스트를 입력합니다.</p>}
+                            {qErr && <p className="text-xs text-rose-500 dark:text-rose-400">{qErr}</p>}
+                          </div>
+                          <div className="flex flex-col items-center gap-0.5 shrink-0">
+                            <button type="button" aria-label="위로" onClick={() => moveQuestion(i, -1)} disabled={i === 0}
+                              className="w-7 h-6 flex items-center justify-center text-ink-400 dark:text-ink-500 hover:text-accent-600 dark:hover:text-accent-300 disabled:opacity-30"><Icon name="chevron-up" className="w-4 h-4" /></button>
+                            <button type="button" aria-label="아래로" onClick={() => moveQuestion(i, 1)} disabled={i === questions.length - 1}
+                              className="w-7 h-6 flex items-center justify-center text-ink-400 dark:text-ink-500 hover:text-accent-600 dark:hover:text-accent-300 disabled:opacity-30"><Icon name="chevron-down" className="w-4 h-4" /></button>
+                            <button type="button" aria-label="문항 삭제" onClick={() => removeQuestion(i)} disabled={questions.length <= 1}
+                              className="w-7 h-6 flex items-center justify-center text-rose-400 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg disabled:opacity-30"><Icon name="trash" className="w-4 h-4" /></button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+        </Modal>
+      );
+    }
+
+    // ========================================
+    // 📄 SURVEY RESULTS PANEL (문항별 집계 + 폴링)
+    // ========================================
+    function SurveyResultsPanel({ survey, onClose, onChanged }) {
+      const toast = useToast();
+      const surveyId = survey.id;
+      const { data, loading, error, refetch } = useAsync(() => api.getSurveyResults(surveyId), [surveyId]);
+      const [exporting, setExporting] = useState(false);
+
+      // 폴링 (패널 열려있을 때만, cleanup 으로 정지)
+      useEffect(() => {
+        let id, stopped = false;
+        const tick = () => {
+          if (stopped) return;
+          refetch(true).catch(() => {}).finally(() => { if (!stopped) id = setTimeout(tick, POLL_INTERVAL); });
+        };
+        id = setTimeout(tick, POLL_INTERVAL);
+        return () => { stopped = true; clearTimeout(id); };
+      }, [surveyId, refetch]);
+
+      const doExport = async () => {
+        setExporting(true);
+        try { await api.exportSurvey(surveyId); toast.success('설문 응답 엑셀 다운로드를 시작합니다.'); }
+        catch (e) { toast.error(e.message); }
+        finally { setExporting(false); }
+      };
+
+      const sv = data?.survey || survey;
+
+      return (
+        <div className="fixed inset-0 z-50">
+          <div className="absolute inset-0 bg-ink-950/50 backdrop-blur-sm" onClick={onClose} />
+          <div className="absolute top-0 right-0 h-full w-full max-w-xl bg-ink-50 dark:bg-ink-950 shadow-2xl slide-in flex flex-col">
+            {/* 헤더 */}
+            <div className="bg-white dark:bg-ink-900 border-b border-ink-100 dark:border-ink-800 px-5 py-4 flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 mb-1">
+                  <StatusBadge status={sv.status} />
+                  <span className="inline-flex items-center gap-1 text-xs text-accent-600 dark:text-accent-300"><span className="w-1.5 h-1.5 rounded-full bg-accent-500 dark:bg-accent-400 animate-ping" />실시간</span>
+                </div>
+                <h2 className="font-bold text-ink-800 dark:text-ink-100 leading-snug truncate">{sv.title}</h2>
+                {sv.intro && <p className="text-sm text-ink-500 dark:text-ink-400 truncate">{sv.intro}</p>}
+              </div>
+              <button onClick={onClose} className="w-8 h-8 rounded-lg text-ink-400 dark:text-ink-500 hover:bg-ink-100 dark:hover:bg-ink-800 text-xl leading-none shrink-0">×</button>
+            </div>
+
+            {/* 본문 */}
+            <div className="flex-1 overflow-y-auto scrollbar-thin p-5 space-y-4">
+              {loading && <LoadingBlock rows={3} />}
+              {error && <ErrorBanner error={error} onRetry={() => refetch()} />}
+              {data && (
+                <>
+                  <Card className="p-4 flex items-center justify-between">
+                    <div>
+                      <div className="text-3xl font-extrabold text-ink-800 dark:text-ink-100 tabular-nums">{data.total_responses ?? 0}</div>
+                      <div className="text-sm text-ink-400 dark:text-ink-500 font-medium">총 응답 수</div>
+                    </div>
+                    <Badge tone="slate">{(data.questions || []).length}문항</Badge>
+                  </Card>
+                  {(data.questions || []).map((q, qi) => (
+                    <SurveyQuestionResult key={q.id ?? qi} question={q} index={qi} />
+                  ))}
+                  {(data.questions || []).length === 0 && (
+                    <EmptyState icon="inbox" title="문항이 없습니다" desc="설문에 문항을 추가해주세요." />
+                  )}
+                </>
+              )}
+            </div>
+
+            {/* 하단 액션 */}
+            <div className="bg-white dark:bg-ink-900 border-t border-ink-100 dark:border-ink-800 px-5 py-3.5 flex items-center justify-end gap-2">
+              <Button onClick={doExport} disabled={exporting}>{exporting && <Spinner className="w-4 h-4" />}응답 엑셀 다운로드</Button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // 설문 문항별 결과 카드 (객관식 막대 / rating 평균·분포 / 주관식 리스트)
+    const SURVEY_BAR_COLORS = ['bg-accent-600 dark:bg-accent-500', 'bg-accent-500 dark:bg-accent-400', 'bg-sky-500', 'bg-cyan-500', 'bg-teal-500', 'bg-accent-700 dark:bg-accent-300'];
+    function SurveyQuestionResult({ question, index }) {
+      const q = question;
+      const isChoice = q.poll_type === 'single_choice' || q.poll_type === 'multiple_choice';
+      // rating 분포: [{score,count,percent}] 객체배열 / [count,...] 숫자배열 / {1:n,...} 맵 모두 대응
+      const distEntries = useMemo(() => {
+        if (!q.distribution) return [];
+        if (Array.isArray(q.distribution)) {
+          return q.distribution.map((c, i) => (c && typeof c === 'object') ? [c.score ?? (i + 1), c.count ?? 0] : [i + 1, c]);
+        }
+        return [1, 2, 3, 4, 5].map(k => [k, q.distribution[k] ?? q.distribution[String(k)] ?? 0]);
+      }, [q.distribution]);
+      const maxDist = Math.max(1, ...distEntries.map(([, c]) => c));
+      return (
+        <Card className="p-5">
+          <div className="flex items-start gap-2 mb-3">
+            <span className="w-6 h-6 rounded-lg bg-ink-100 dark:bg-ink-800 text-ink-500 dark:text-ink-400 flex items-center justify-center text-xs font-bold shrink-0">{index + 1}</span>
+            <div className="min-w-0">
+              <h3 className="text-sm font-bold text-ink-800 dark:text-ink-100 leading-snug">{q.question}</h3>
+              <div className="flex items-center gap-2 mt-1">
+                <PollTypeBadge type={q.poll_type} />
+                <span className="text-xs text-ink-400 dark:text-ink-500">{q.total_responses ?? 0}명 응답</span>
+              </div>
+            </div>
+          </div>
+
+          {/* 객관식: 막대 */}
+          {isChoice && (
+            <div className="space-y-3 mt-3">
+              {(q.options || []).length === 0
+                ? <p className="text-sm text-ink-400 dark:text-ink-500 text-center py-2">선택지가 없습니다.</p>
+                : (q.options || []).map((o, i) => (
+                  <div key={o.option_id ?? i}>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-sm font-medium text-ink-700 dark:text-ink-200">{o.label}</span>
+                      <span className="text-sm tabular-nums"><span className="font-bold text-ink-900 dark:text-ink-50">{o.percent ?? 0}%</span><span className="text-ink-400 dark:text-ink-500 ml-1.5">{o.count ?? 0}표</span></span>
+                    </div>
+                    <div className="h-3 rounded-full bg-ink-100 dark:bg-ink-800 overflow-hidden">
+                      <div className={`h-full rounded-full bar-anim ${SURVEY_BAR_COLORS[i % SURVEY_BAR_COLORS.length]}`} style={{ width: (o.percent ?? 0) + '%', transition: 'width .5s ease' }} />
+                    </div>
+                  </div>
+                ))}
+            </div>
+          )}
+
+          {/* rating: 평균 + 분포 */}
+          {q.poll_type === 'rating' && (
+            <div className="mt-3">
+              <div className="flex items-baseline gap-2 mb-3">
+                <span className="text-3xl font-extrabold text-accent-700 dark:text-accent-300 tabular-nums">{q.average_score != null ? Number(q.average_score).toFixed(1) : '-'}</span>
+                <span className="text-sm text-ink-400 dark:text-ink-500">/ 5 평균</span>
+              </div>
+              <div className="space-y-2">
+                {distEntries.map(([score, count]) => (
+                  <div key={score} className="flex items-center gap-2">
+                    <span className="w-8 text-xs font-semibold text-ink-500 dark:text-ink-400 shrink-0">{score}점</span>
+                    <div className="flex-1 h-2.5 rounded-full bg-ink-100 dark:bg-ink-800 overflow-hidden">
+                      <div className="h-full rounded-full bg-amber-500 dark:bg-amber-400 bar-anim" style={{ width: (count / maxDist * 100) + '%', transition: 'width .5s ease' }} />
+                    </div>
+                    <span className="w-8 text-right text-xs tabular-nums text-ink-500 dark:text-ink-400 shrink-0">{count}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 주관식: 응답 리스트 */}
+          {q.poll_type === 'short_text' && (
+            <div className="mt-3">
+              {(q.text_answers && q.text_answers.length)
+                ? (
+                  <div className="space-y-2 max-h-64 overflow-y-auto scrollbar-thin">
+                    {q.text_answers.map((t, i) => (
+                      <div key={i} className="bg-ink-50 dark:bg-ink-800/60 rounded-xl px-3.5 py-2.5">
+                        <p className="text-sm text-ink-700 dark:text-ink-200 leading-relaxed whitespace-pre-wrap">{typeof t === 'string' ? t : t.text}</p>
+                        {t.submitted_at && <p className="text-[11px] text-ink-400 dark:text-ink-500 mt-1">{fmtTime(t.submitted_at)}</p>}
+                      </div>
+                    ))}
+                  </div>
+                )
+                : <p className="text-sm text-ink-400 dark:text-ink-500 text-center py-3">아직 응답이 없습니다.</p>}
+            </div>
+          )}
+        </Card>
+      );
+    }
+
+    // ========================================
+    // 📄 RESULTS PANEL  (슬라이드 패널 + 2~3초 폴링 — PRD 5.4.1 / 6.1)
+    //   라우트 #/poll/:pollId/results 로도 진입 가능
+    // ========================================
+    const POLL_INTERVAL = 2500;
+
+    function ResultsPanel({ poll, onClose, onChanged }) {
+      const toast = useToast();
+      const pollId = poll.id;
+      const { data, loading, error, refetch } = useAsync(() => api.getPollResults(pollId), [pollId]);
+      const [togglingShow, setTogglingShow] = useState(false);
+      const [exporting, setExporting] = useState(false);
+
+      // 폴링: 패널이 열려있을 때만 동작, cleanup 으로 정지
+      useEffect(() => {
+        let id, stopped = false;
+        const tick = () => {
+          if (stopped) return;
+          refetch(true).catch(() => {}).finally(() => { if (!stopped) id = setTimeout(tick, POLL_INTERVAL); });
+        };
+        id = setTimeout(tick, POLL_INTERVAL);
+        return () => { stopped = true; clearTimeout(id); };
+      }, [pollId, refetch]);
+
+      const pollData = data?.poll || poll;
+      const showResults = pollData.show_results;
+
+      const toggleShow = async () => {
+        setTogglingShow(true);
+        try {
+          await api.updatePoll(pollId, { show_results: !showResults });
+          await refetch(true);
+          onChanged && onChanged();
+          toast.success(showResults ? '결과를 비공개로 전환했습니다.' : '결과를 공개했습니다.');
+        } catch (e) { toast.error(e.message); }
+        finally { setTogglingShow(false); }
+      };
+      const doExport = async () => {
+        setExporting(true);
+        try { await api.exportPoll(pollId); toast.success('응답 엑셀 다운로드를 시작합니다.'); }
+        catch (e) { toast.error(e.message); }
+        finally { setExporting(false); }
+      };
+
+      const colors = ['bg-accent-600 dark:bg-accent-500', 'bg-accent-500 dark:bg-accent-400', 'bg-sky-500', 'bg-cyan-500', 'bg-teal-500', 'bg-accent-700 dark:bg-accent-300'];
+
+      return (
+        <div className="fixed inset-0 z-50">
+          <div className="absolute inset-0 bg-ink-950/50 backdrop-blur-sm" onClick={onClose} />
+          <div className="absolute top-0 right-0 h-full w-full max-w-xl bg-ink-50 dark:bg-ink-950 shadow-2xl slide-in flex flex-col">
+            {/* 헤더 */}
+            <div className="bg-white dark:bg-ink-900 border-b border-ink-100 dark:border-ink-800 px-5 py-4 flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 mb-1">
+                  <PollTypeBadge type={pollData.poll_type} />
+                  <StatusBadge status={pollData.status} />
+                  <span className="inline-flex items-center gap-1 text-xs text-accent-600 dark:text-accent-300"><span className="w-1.5 h-1.5 rounded-full bg-accent-500 dark:bg-accent-400 animate-ping" />실시간</span>
+                </div>
+                <h2 className="font-bold text-ink-800 dark:text-ink-100 leading-snug truncate">{pollData.title}</h2>
+                <p className="text-sm text-ink-500 dark:text-ink-400 truncate">{pollData.question}</p>
+                {pollData.session_name && <p className="text-xs text-ink-400 dark:text-ink-500 mt-0.5">{pollData.session_name}</p>}
+              </div>
+              <button onClick={onClose} className="w-8 h-8 rounded-lg text-ink-400 dark:text-ink-500 hover:bg-ink-100 dark:hover:bg-ink-800 text-xl leading-none shrink-0">×</button>
+            </div>
+
+            {/* 본문 */}
+            <div className="flex-1 overflow-y-auto scrollbar-thin p-5 space-y-4">
+              {loading && <LoadingBlock rows={3} />}
+              {error && <ErrorBanner error={error} onRetry={() => refetch()} />}
+              {data && (
+                <>
+                  <Card className="p-4 flex items-center justify-between">
+                    <div>
+                      <div className="text-3xl font-extrabold text-ink-800 dark:text-ink-100 tabular-nums">{data.total_responses ?? 0}</div>
+                      <div className="text-sm text-ink-400 dark:text-ink-500 font-medium">총 응답 수</div>
+                    </div>
+                    {data.average_score != null && (
+                      <div className="text-right">
+                        <div className="text-3xl font-extrabold text-accent-700 dark:text-accent-300 tabular-nums">{Number(data.average_score).toFixed(1)}<span className="text-lg text-accent-300 dark:text-accent-700"> / 5</span></div>
+                        <div className="text-sm text-ink-400 dark:text-ink-500 font-medium">평균 점수</div>
+                      </div>
+                    )}
+                  </Card>
+
+                  {/* 선택지별 / 척도형 막대 */}
+                  {data.options && data.options.length > 0 && (
+                    <Card className="p-5 space-y-4">
+                      {data.options.map((o, i) => (
+                        <div key={o.option_id ?? i}>
+                          <div className="flex items-center justify-between mb-1.5">
+                            <span className="text-sm font-medium text-ink-700 dark:text-ink-200">{o.label}</span>
+                            <span className="text-sm tabular-nums"><span className="font-bold text-ink-900 dark:text-ink-50">{o.percent ?? 0}%</span><span className="text-ink-400 dark:text-ink-500 ml-1.5">{o.count ?? 0}표</span></span>
+                          </div>
+                          <div className="h-3 rounded-full bg-ink-100 dark:bg-ink-800 overflow-hidden">
+                            <div className={`h-full rounded-full bar-anim ${colors[i % colors.length]}`} style={{ width: (o.percent ?? 0) + '%', transition: 'width .5s ease' }} />
+                          </div>
+                        </div>
+                      ))}
+                    </Card>
+                  )}
+
+                  {/* 주관식 응답 (최신순) */}
+                  {data.text_answers && (
+                    <Card className="p-5">
+                      <h3 className="text-sm font-bold text-ink-700 dark:text-ink-200 mb-3">주관식 응답 <span className="text-ink-400 dark:text-ink-500 font-medium">({data.text_answers.length})</span></h3>
+                      {data.text_answers.length === 0
+                        ? <p className="text-sm text-ink-400 dark:text-ink-500 text-center py-4">아직 응답이 없습니다.</p>
+                        : (
+                          <div className="space-y-2 max-h-80 overflow-y-auto scrollbar-thin">
+                            {data.text_answers.map((t, i) => (
+                              <div key={i} className="bg-ink-50 dark:bg-ink-800/60 rounded-xl px-3.5 py-2.5">
+                                <p className="text-sm text-ink-700 dark:text-ink-200 leading-relaxed whitespace-pre-wrap">{t.text}</p>
+                                {t.submitted_at && <p className="text-[11px] text-ink-400 dark:text-ink-500 mt-1">{fmtTime(t.submitted_at)}</p>}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                    </Card>
+                  )}
+
+                  {(!data.options || data.options.length === 0) && (!data.text_answers) && data.average_score == null && (
+                    <EmptyState icon="inbox" title="아직 수집된 응답이 없습니다" desc="응답이 들어오면 실시간으로 표시됩니다." />
+                  )}
+                </>
+              )}
+            </div>
+
+            {/* 하단 액션 */}
+            <div className="bg-white dark:bg-ink-900 border-t border-ink-100 dark:border-ink-800 px-5 py-3.5 flex items-center justify-between gap-2">
+              <Button variant={showResults ? 'subtle' : 'secondary'} disabled={togglingShow} onClick={toggleShow}>
+                {togglingShow && <Spinner className="w-4 h-4" />}{showResults ? '결과 비공개로 전환' : '결과 공개'}
+              </Button>
+              <Button onClick={doExport} disabled={exporting}>{exporting && <Spinner className="w-4 h-4" />}응답 엑셀 다운로드</Button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function fmtTime(iso) {
+      const d = new Date(iso);
+      if (isNaN(d)) return iso;
+      const pad = n => String(n).padStart(2, '0');
+      return `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    }
+
+    // 라우트로 직접 진입한 결과 화면 (#/poll/:pollId/results)
+    function ResultsRoute({ pollId, onLogout }) {
+      const { data, loading, error } = useAsync(() => api.getPollResults(pollId), [pollId]);
+      // ResultsPanel 은 poll 객체를 받아야 하므로 결과의 poll 을 사용
+      const poll = data?.poll || { id: pollId, title: '결과', question: '', poll_type: 'single_choice', status: 'live', show_results: true };
+      const [closed, setClosed] = useState(false);
+      if (closed) { navigate('/'); return null; }
+      return (
+        <AdminShell onLogout={onLogout} crumbs={[{ label: '프로젝트', to: '/' }, { label: '결과 상세' }]}>
+          {loading && <LoadingBlock />}
+          {error && <ErrorBanner error={error} />}
+          {data && <ResultsPanel poll={poll} onClose={() => setClosed(true)} />}
+        </AdminShell>
+      );
+    }
+
+    // ========================================
+    // 🚀 APP
+    // ========================================
+    function App() {
+      const [authed, setAuthed] = useState(!!getToken());
+      const [crumbs, setCrumbs] = useState(null);
+      const path = useHashRoute();
+
+      // 401/403 시 로그아웃 처리 주입
+      useEffect(() => { onUnauthorized = () => setAuthed(false); }, []);
+
+      const logout = () => { clearToken(); setAuthed(false); navigate('/'); };
+
+      if (!authed) return <LoginScreen onLogin={() => setAuthed(true)} />;
+
+      // 라우팅
+      let content, useShell = true;
+      const mProject = path.match(/^\/project\/([^/?]+)/);
+      const mResults = path.match(/^\/poll\/([^/?]+)\/results/);
+
+      if (mResults) {
+        return <ResultsRoute pollId={mResults[1]} onLogout={logout} />;
+      } else if (mProject) {
+        content = <ProjectDetail projectId={mProject[1]} />;
+      } else {
+        content = <ProjectsHome />;
+      }
+
+      // 프로젝트 상세가 아니면 crumbs 기본값 사용
+      const effectiveCrumbs = mProject ? (crumbs || [{ label: '프로젝트', to: '/' }, { label: '...' }]) : [{ label: '프로젝트' }];
+
+      return (
+        <CrumbContext.Provider value={setCrumbs}>
+          <AdminShell onLogout={logout} crumbs={effectiveCrumbs}>
+            {content}
+          </AdminShell>
+        </CrumbContext.Provider>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(
+      <ToastProvider><App /></ToastProvider>
+    );
+  </script>
+</body>
+</html>

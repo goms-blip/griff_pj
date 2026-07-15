@@ -1,0 +1,1233 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Live Poll · 실시간 행사 참여</title>
+  <!-- 다크모드 깜빡임 방지: Tailwind 로드 전 html.dark 선반영 -->
+  <script>
+    (function () {
+      try {
+        var stored = localStorage.getItem('lp_theme');
+        var dark = stored ? stored === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches;
+        if (dark) document.documentElement.classList.add('dark');
+      } catch (e) {}
+    })();
+  </script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: { extend: {
+        fontFamily: { sans: ['Pretendard','-apple-system','BlinkMacSystemFont','system-ui','Segoe UI','Roboto','Apple SD Gothic Neo','"Noto Sans KR"','sans-serif'] },
+        colors: {
+          ink: { 50:'#f6f7f8',100:'#eceef0',200:'#dde0e4',300:'#c3c8cf',400:'#9aa1ab',500:'#727a85',600:'#535a64',700:'#3e444c',800:'#272b31',900:'#181b1f',950:'#0e1013' },
+          accent: { 50:'#eef7f7',100:'#d6ecec',200:'#aedada',300:'#7cc1c2',400:'#4ba2a4',500:'#2f8587',600:'#236d70',700:'#1f585b',800:'#1d484b',900:'#1b3d3f',950:'#0c2324' },
+        },
+        letterSpacing: { tightish: '-0.011em' },
+      } },
+    };
+  </script>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" />
+  <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    html { -webkit-tap-highlight-color: transparent; }
+    html, body { -webkit-tap-highlight-color: transparent; }
+    body, body * { transition-property: background-color, border-color, color, fill, stroke; transition-duration: 200ms; transition-timing-function: ease; }
+    @keyframes barGrow { from { width: 0; } }
+    .bar-anim { animation: barGrow 0.7s cubic-bezier(.22,1,.36,1); }
+    @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+    .fade-up { animation: fadeUp 0.35s ease both; }
+    @keyframes pulseSk { 0%,100% { opacity: 1; } 50% { opacity: .45; } }
+    .sk { animation: pulseSk 1.3s ease-in-out infinite; }
+    @keyframes pop { 0% { transform: scale(.6); opacity: 0; } 60% { transform: scale(1.08); } 100% { transform: scale(1); opacity: 1; } }
+    .pop { animation: pop 0.45s cubic-bezier(.22,1.4,.4,1) both; }
+  </style>
+</head>
+<body class="bg-ink-50 dark:bg-ink-950 font-sans antialiased text-ink-800 dark:text-ink-100">
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect, useRef, useMemo, useCallback, useContext, createContext } = React;
+
+    // ========================================
+    // ICONS — Lucide 스타일 모노크롬 라인 아이콘 세트
+    // viewBox 0 0 24 24 / fill none / stroke currentColor / stroke-width 1.75
+    // 크기는 className(w-4 h-4 등), 색은 currentColor(부모 text-*)로 제어
+    // ========================================
+    function Icon({ className = 'w-5 h-5', children }) {
+      return (
+        <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          {children}
+        </svg>
+      );
+    }
+    const Icons = {
+      Sun: (p) => <Icon {...p}><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" /></Icon>,
+      Moon: (p) => <Icon {...p}><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" /></Icon>,
+      CircleDot: (p) => <Icon {...p}><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="3" /></Icon>,
+      CheckSquare: (p) => <Icon {...p}><path d="M9 11l3 3L22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" /></Icon>,
+      Star: (p) => <Icon {...p}><path d="M12 2.5l2.9 5.88 6.49.94-4.7 4.58 1.11 6.46L12 17.3l-5.8 3.05 1.1-6.46L2.6 9.32l6.5-.94L12 2.5z" /></Icon>,
+      Pencil: (p) => <Icon {...p}><path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" /></Icon>,
+      Clock: (p) => <Icon {...p}><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></Icon>,
+      BarChart: (p) => <Icon {...p}><path d="M3 3v18h18" /><rect x="7" y="11" width="3" height="6" rx="0.5" /><rect x="12" y="7" width="3" height="10" rx="0.5" /><rect x="17" y="13" width="3" height="4" rx="0.5" /></Icon>,
+      Check: (p) => <Icon {...p}><path d="M20 6L9 17l-5-5" /></Icon>,
+      AlertTriangle: (p) => <Icon {...p}><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><path d="M12 9v4M12 17h.01" /></Icon>,
+      Lock: (p) => <Icon {...p}><rect x="4" y="11" width="16" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></Icon>,
+      Mic: (p) => <Icon {...p}><rect x="9" y="2" width="6" height="12" rx="3" /><path d="M5 10a7 7 0 0 0 14 0M12 19v3" /></Icon>,
+      Clipboard: (p) => <Icon {...p}><rect x="8" y="2" width="8" height="4" rx="1" /><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" /></Icon>,
+      FileText: (p) => <Icon {...p}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6M8 13h8M8 17h8M8 9h2" /></Icon>,
+      Flag: (p) => <Icon {...p}><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V4s-1 1-4 1-5-2-8-2-4 1-4 1z" /><path d="M4 22v-7" /></Icon>,
+      Search: (p) => <Icon {...p}><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></Icon>,
+      MessageSquare: (p) => <Icon {...p}><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8z" /></Icon>,
+      ChevronRight: (p) => <Icon {...p}><path d="M9 18l6-6-6-6" /></Icon>,
+    };
+
+    // ========================================
+    // 🌗 THEME (다크모드 토글) — 시각 전용
+    // ========================================
+    function useTheme() {
+      const [dark, setDark] = useState(() => document.documentElement.classList.contains('dark'));
+      const toggle = useCallback(() => {
+        setDark(prev => {
+          const next = !prev;
+          document.documentElement.classList.toggle('dark', next);
+          try { localStorage.setItem('lp_theme', next ? 'dark' : 'light'); } catch (e) {}
+          return next;
+        });
+      }, []);
+      return { dark, toggle };
+    }
+
+    function ThemeToggle({ className = '', onLight = false }) {
+      const { dark, toggle } = useTheme();
+      // onLight: 컬러 헤더 위(흰 글자 영역)에 올릴 때의 스타일
+      const tone = onLight
+        ? 'text-white/90 hover:bg-white/15 ring-1 ring-white/25'
+        : 'text-ink-500 dark:text-ink-300 hover:bg-ink-100 dark:hover:bg-ink-800 ring-1 ring-ink-200 dark:ring-ink-700 bg-white/70 dark:bg-ink-900/70 backdrop-blur';
+      return (
+        <button type="button" onClick={toggle} aria-label={dark ? '라이트 모드로 전환' : '다크 모드로 전환'} title={dark ? '라이트 모드' : '다크 모드'}
+          className={`inline-flex items-center justify-center w-9 h-9 rounded-full transition active:scale-90 ${tone} ${className}`}>
+          {dark ? <Icons.Sun className="w-5 h-5" /> : <Icons.Moon className="w-5 h-5" />}
+        </button>
+      );
+    }
+
+    // ========================================
+    // 🔌 API LAYER  (server.js 공개 엔드포인트 연동)
+    // ----------------------------------------
+    // 모든 데이터 접근은 이 `api` 객체 한 곳에 모여 있다.
+    // 서버 응답을 화면 컴포넌트가 기대하는 형태로 변환(reshape)한다.
+    //   GET  /api/public/projects/:code
+    //   GET  /api/public/sessions/:code
+    //   GET  /api/public/polls/:code (?token=)
+    //   POST /api/public/polls/:code/responses
+    //   GET  /api/public/polls/:code/results
+    // ========================================
+    const API_BASE_URL = '/api';
+
+    function jitter(base) {
+      // 8~12초 랜덤 폴링 간격 (PRD 6.1)
+      return base + Math.floor(Math.random() * 4000);
+    }
+
+    // 공통 fetch 래퍼: JSON 파싱 + 에러 정규화
+    async function request(path, opts) {
+      const res = await fetch(`${API_BASE_URL}${path}`, opts);
+      let body = null;
+      try { body = await res.json(); } catch (e) { /* 비-JSON 응답 */ }
+      if (!res.ok || (body && body.success === false)) {
+        const err = new Error((body && body.error) || `요청 실패 (${res.status})`);
+        err.code = res.status;
+        throw err;
+      }
+      return body;
+    }
+
+    function summarizePoll(p) {
+      return {
+        code: p.code, title: p.title, question: p.question, poll_type: p.poll_type,
+        status: p.status, session_title: p.session_name || p.session_title || null,
+      };
+    }
+
+    const PRIVACY_NOTICE =
+      '수집 목적: 행사 만족도 조사 및 제품 상담 안내 / 수집 항목: 응답 내용, 이메일(상담 희망 시) / 보유 기간: 수집일로부터 1년. 동의를 원치 않으시면 응답하지 않으셔도 됩니다.';
+
+    const api = {
+      async getProject(projectCode) {
+        const d = await request(`/public/projects/${encodeURIComponent(projectCode)}`);
+        return {
+          title: d.title,
+          subtitle: d.client || '',
+          code: d.code,
+          sessions: (d.sessions || []).map(s => ({
+            code: s.code, title: s.name, speaker: s.speaker || '', track: s.track_name || '',
+            track_id: s.track_id || null,
+            session_date: s.session_date || '', time_range: s.time_range || '', room: s.room || '',
+          })),
+          livePolls: (d.livePolls || []).map(summarizePoll),
+        };
+      },
+      async getSession(sessionCode) {
+        const d = await request(`/public/sessions/${encodeURIComponent(sessionCode)}`);
+        return {
+          title: d.name,
+          speaker: d.speaker || '',
+          track: d.track_name || '',
+          session_date: d.session_date || '', time_range: d.time_range || '', room: d.room || '',
+          code: d.code,
+          livePolls: (d.livePolls || []).map(summarizePoll),
+        };
+      },
+      async getPoll(pollCode, token) {
+        const qs = token ? `?token=${encodeURIComponent(token)}` : '';
+        const p = await request(`/public/polls/${encodeURIComponent(pollCode)}${qs}`);
+        // 뉴스레터형: 단일 질문을 bundle 로 감싸 설문 UI(NewsletterSurvey) 재사용
+        if (p.source_type === 'newsletter') {
+          return {
+            code: p.code, title: p.title, question: p.question,
+            poll_type: 'bundle', source_type: 'newsletter', status: p.status,
+            show_results: p.show_results, session_title: null,
+            project_code: p.project_code || null,
+            questions: [{
+              id: p.id || p.code, poll_type: p.poll_type, question: p.question,
+              options: p.options || [], required: true, max_length: 200,
+            }],
+            privacy_notice: PRIVACY_NOTICE,
+            _identified: !!token,
+          };
+        }
+        return {
+          code: p.code, title: p.title, question: p.question, poll_type: p.poll_type,
+          status: p.status, show_results: p.show_results, allow_multiple_answers: p.allow_multiple_answers,
+          source_type: p.source_type, session_title: p.session_name || null,
+          project_code: p.project_code || null, session_code: p.session_code || null,
+          options: p.options || [], max_length: 200, _identified: !!token,
+        };
+      },
+      async submitResponse(pollCode, body) {
+        return request(`/public/polls/${encodeURIComponent(pollCode)}/responses`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+      },
+      // 묶음 설문(survey) — 서버가 이미 bundle 형태로 반환 (questions[], privacy_notice)
+      async getSurvey(code, token) {
+        const qs = token ? `?token=${encodeURIComponent(token)}` : '';
+        const s = await request(`/public/surveys/${encodeURIComponent(code)}${qs}`);
+        return { ...s, _identified: !!token };
+      },
+      async submitSurvey(code, body) {
+        return request(`/public/surveys/${encodeURIComponent(code)}/responses`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+      },
+      async getResults(pollCode) {
+        const r = await request(`/public/polls/${encodeURIComponent(pollCode)}/results`);
+        if (r.poll_type === 'rating') {
+          const dist = (r.distribution && r.distribution.length)
+            ? r.distribution
+            : [1, 2, 3, 4, 5].map(s => ({ score: s, count: 0, percent: 0 }));
+          return { total_responses: r.total_responses, average_score: r.average_score || 0, distribution: dist };
+        }
+        if (r.poll_type === 'short_text') {
+          return {
+            total_responses: r.total_responses,
+            text_answers: (r.text_answers || []).map((t, i) => ({
+              id: `t${i}`, text: t.text,
+              at: t.submitted_at ? Date.parse(t.submitted_at) : Date.now(),
+            })),
+          };
+        }
+        const options = (r.options || []).slice().sort((a, b) => b.count - a.count);
+        return { total_responses: r.total_responses, options };
+      },
+    };
+
+    // ========================================
+    // 🧰 LOCAL STORAGE 유틸 (중복 응답 방지)
+    // ========================================
+    const LS = {
+      key() {
+        let k = localStorage.getItem('lp_respondent_key');
+        if (!k) { k = (crypto.randomUUID ? crypto.randomUUID() : 'r-' + Date.now() + '-' + Math.random().toString(36).slice(2)); localStorage.setItem('lp_respondent_key', k); }
+        return k;
+      },
+      answered() { try { return JSON.parse(localStorage.getItem('lp_answered') || '[]'); } catch { return []; } },
+      hasAnswered(code) { return LS.answered().includes(code); },
+      markAnswered(code) { const a = LS.answered(); if (!a.includes(code)) { a.push(code); localStorage.setItem('lp_answered', JSON.stringify(a)); } },
+    };
+
+    // ========================================
+    // 🔀 HASH ROUTER
+    // ========================================
+    const RouterContext = createContext(null);
+
+    function parseHash() {
+      let h = window.location.hash.replace(/^#/, '') || '/';
+      const [path, query = ''] = h.split('?');
+      const params = {};
+      new URLSearchParams(query).forEach((v, k) => (params[k] = v));
+      return { path: path || '/', query: params };
+    }
+
+    function Router({ children }) {
+      const [route, setRoute] = useState(parseHash());
+      useEffect(() => {
+        const on = () => { setRoute(parseHash()); window.scrollTo(0, 0); };
+        window.addEventListener('hashchange', on);
+        return () => window.removeEventListener('hashchange', on);
+      }, []);
+      const navigate = useCallback((to) => { window.location.hash = to; }, []);
+      return <RouterContext.Provider value={{ ...route, navigate }}>{children}</RouterContext.Provider>;
+    }
+    const useRouter = () => useContext(RouterContext);
+
+    function matchRoute(pattern, path) {
+      const pp = pattern.split('/').filter(Boolean);
+      const ap = path.split('/').filter(Boolean);
+      if (pp.length !== ap.length) return null;
+      const params = {};
+      for (let i = 0; i < pp.length; i++) {
+        if (pp[i].startsWith(':')) params[pp[i].slice(1)] = decodeURIComponent(ap[i]);
+        else if (pp[i] !== ap[i]) return null;
+      }
+      return params;
+    }
+
+    function Routes({ routes, fallback }) {
+      const { path } = useRouter();
+      for (const r of routes) {
+        const params = matchRoute(r.path, path);
+        if (params) return r.render(params);
+      }
+      return fallback;
+    }
+
+    // ========================================
+    // 🎨 DESIGN SYSTEM
+    // ========================================
+    function Button({ variant = 'primary', size = 'lg', disabled, loading, onClick, className = '', children, type = 'button', ...rest }) {
+      const base = 'inline-flex items-center justify-center font-semibold rounded-xl transition active:scale-[.98] disabled:opacity-50 disabled:active:scale-100 select-none focus:outline-none focus:ring-4 focus:ring-accent-200 dark:focus:ring-accent-900';
+      const sizes = { sm: 'text-sm px-3 py-2 gap-1.5', md: 'text-sm px-4 py-2.5 gap-2', lg: 'text-base px-5 py-3.5 gap-2' };
+      const variants = {
+        primary: 'bg-accent-600 text-white hover:bg-accent-700 dark:bg-accent-500 dark:hover:bg-accent-400 shadow-sm shadow-accent-300/60 dark:shadow-none',
+        secondary: 'bg-white dark:bg-ink-900 text-accent-700 dark:text-accent-300 border border-accent-200 dark:border-accent-800 hover:bg-accent-50 dark:hover:bg-accent-950/40',
+        ghost: 'bg-transparent text-ink-600 dark:text-ink-300 hover:bg-ink-100 dark:hover:bg-ink-800',
+        danger: 'bg-rose-600 text-white hover:bg-rose-700 dark:bg-rose-500 dark:hover:bg-rose-400',
+      };
+      return (
+        <button type={type} disabled={disabled || loading} onClick={onClick}
+          className={`${base} ${sizes[size]} ${variants[variant]} ${className}`} {...rest}>
+          {loading && <Spinner className="w-4 h-4" />}
+          {children}
+        </button>
+      );
+    }
+
+    function Spinner({ className = 'w-5 h-5' }) {
+      return (
+        <svg className={`animate-spin ${className}`} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+          <path className="opacity-90" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+        </svg>
+      );
+    }
+
+    function Card({ className = '', children, ...rest }) {
+      return <div className={`bg-white dark:bg-ink-900 rounded-2xl shadow-sm dark:shadow-none ring-1 ring-ink-100 dark:ring-ink-800 ${className}`} {...rest}>{children}</div>;
+    }
+
+    function Badge({ tone = 'slate', children }) {
+      const tones = {
+        slate: 'bg-ink-100 text-ink-600 dark:bg-ink-800 dark:text-ink-300',
+        green: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300',
+        red: 'bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300',
+        indigo: 'bg-accent-100 text-accent-700 dark:bg-accent-500/15 dark:text-accent-300',
+        amber: 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300',
+      };
+      return <span className={`inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-full ${tones[tone]}`}>{children}</span>;
+    }
+
+    function StatusBadge({ status }) {
+      if (status === 'live') return <Badge tone="green"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />진행 중</Badge>;
+      if (status === 'closed') return <Badge tone="slate">종료됨</Badge>;
+      if (status === 'scheduled') return <Badge tone="amber">예정</Badge>;
+      if (status === 'draft') return <Badge tone="slate">준비 중</Badge>;
+      return <Badge>{status}</Badge>;
+    }
+
+    // 행사 상단 헤더 / 데스크톱 좌측 브랜딩 패널
+    // 모바일(<lg): 가로 컬러 바 (title/subtitle/토글 한 줄)
+    // 데스크톱(lg+): 좌측 패널을 세로로 채우는 브랜딩 영역 (토글은 하단)
+    function EventHeader({ title, subtitle }) {
+      return (
+        <header className="h-full bg-gradient-to-br from-accent-700 to-accent-500 dark:from-accent-800 dark:to-accent-600 text-white lg:flex lg:flex-col lg:h-full">
+          {/* 모바일: 가로 바 — 기존과 동일 */}
+          <div className="max-w-lg mx-auto px-5 py-5 flex items-start justify-between gap-3 w-full lg:hidden">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 text-accent-100 text-xs font-semibold tracking-wide">
+                <span className="inline-block w-2 h-2 rounded-full bg-white/80" />LIVE POLL
+              </div>
+              <h1 className="mt-1.5 text-lg font-bold leading-snug">{title || '실시간 행사'}</h1>
+              {subtitle && <p className="text-accent-100 text-sm mt-0.5">{subtitle}</p>}
+            </div>
+            <ThemeToggle onLight className="shrink-0 -mr-1" />
+          </div>
+          {/* 데스크톱: 세로 브랜딩 패널 */}
+          <div className="hidden lg:flex lg:flex-col lg:h-full lg:justify-between px-10 xl:px-12 py-12">
+            <div className="flex items-center gap-2 text-accent-100 text-xs font-semibold tracking-widest uppercase">
+              <span className="inline-block w-2 h-2 rounded-full bg-white/80 animate-pulse" />Live Poll
+            </div>
+            <div className="min-w-0">
+              <h1 className="text-3xl xl:text-4xl font-bold leading-tight">{title || '실시간 행사'}</h1>
+              {subtitle && <p className="text-accent-100 text-base mt-3 leading-relaxed">{subtitle}</p>}
+            </div>
+            <ThemeToggle onLight className="self-start" />
+          </div>
+        </header>
+      );
+    }
+
+    function Page({ children, header }) {
+      return (
+        <div className="min-h-screen lg:flex lg:items-stretch lg:justify-center lg:bg-ink-100 lg:dark:bg-ink-950">
+          {/* 데스크톱: 중앙 정렬된 max-w-5xl 2패널 카드 */}
+          <div className="lg:w-full lg:max-w-5xl lg:my-0 lg:min-h-screen lg:grid lg:grid-cols-[5fr_7fr] lg:bg-white lg:dark:bg-ink-900 lg:shadow-xl lg:ring-1 lg:ring-ink-200/70 lg:dark:ring-ink-800 flex flex-col">
+            {/* 좌 패널 (모바일: 상단 헤더 바) */}
+            <div className="lg:row-span-1 lg:sticky lg:top-0 lg:self-start lg:h-screen">
+              {header}
+            </div>
+            {/* 우 패널 (콘텐츠 + 푸터) */}
+            <div className="flex-1 flex flex-col lg:min-h-screen">
+              <main className="flex-1 w-full max-w-lg mx-auto lg:mx-0 px-4 py-5 pb-12 lg:px-12 lg:py-12 lg:max-w-md">{children}</main>
+              <footer className="w-full max-w-lg mx-auto lg:mx-0 px-4 py-6 lg:px-12 text-center lg:text-left text-xs text-ink-400 dark:text-ink-500">
+                Powered by Live Poll
+              </footer>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // 상태 화면들
+    function Skeleton() {
+      return (
+        <Page header={<div className="relative h-24 lg:h-full bg-gradient-to-br from-accent-700 to-accent-500 dark:from-accent-800 dark:to-accent-600"><div className="absolute top-4 right-4"><ThemeToggle onLight /></div></div>}>
+          <div className="space-y-4">
+            <div className="sk h-6 w-2/3 rounded-lg bg-ink-200 dark:bg-ink-800" />
+            {[0, 1, 2].map(i => <div key={i} className="sk h-20 rounded-2xl bg-ink-200 dark:bg-ink-800" />)}
+          </div>
+        </Page>
+      );
+    }
+
+    function CenterState({ icon, title, desc, action, tone = 'slate' }) {
+      const ring = { slate: 'bg-ink-100 text-ink-400 dark:bg-ink-800 dark:text-ink-400', red: 'bg-rose-100 text-rose-500 dark:bg-rose-500/15 dark:text-rose-400', amber: 'bg-amber-100 text-amber-500 dark:bg-amber-500/15 dark:text-amber-400', green: 'bg-emerald-100 text-emerald-500 dark:bg-emerald-500/15 dark:text-emerald-400' }[tone];
+      return (
+        <div className="flex flex-col items-center text-center py-12 px-4 fade-up">
+          <div className={`w-16 h-16 rounded-2xl flex items-center justify-center mb-4 ${ring}`}>{icon}</div>
+          <h2 className="text-lg font-bold text-ink-800 dark:text-ink-100">{title}</h2>
+          {desc && <p className="text-ink-500 dark:text-ink-400 text-sm mt-1.5 max-w-xs">{desc}</p>}
+          {action && <div className="mt-5">{action}</div>}
+        </div>
+      );
+    }
+
+    // 데이터 fetch 훅 (refetch 지원)
+    function useAsync(fn, deps) {
+      const [state, setState] = useState({ data: null, loading: true, error: null });
+      const fnRef = useRef(fn);
+      fnRef.current = fn;
+      const run = useCallback(async (silent = false) => {
+        if (!silent) setState(s => ({ ...s, loading: true, error: null }));
+        try { const data = await fnRef.current(); setState({ data, loading: false, error: null }); }
+        catch (e) { setState({ data: null, loading: false, error: e }); }
+      }, deps); // eslint-disable-line
+      useEffect(() => { run(); }, [run]);
+      return { ...state, refetch: () => run(true) };
+    }
+
+    // ========================================
+    // 📊 결과 시각화 컴포넌트
+    // ========================================
+    function ResultBar({ label, percent, count, rank }) {
+      const colors = [
+        'bg-gradient-to-r from-accent-700 to-accent-500',
+        'bg-gradient-to-r from-accent-600 to-accent-400',
+        'bg-gradient-to-r from-accent-500 to-accent-300',
+        'bg-accent-500',
+        'bg-accent-400',
+        'bg-accent-600',
+      ];
+      return (
+        <div className="fade-up">
+          <div className="flex justify-between items-baseline mb-1.5">
+            <span className="text-sm font-medium text-ink-700 dark:text-ink-200">{label}</span>
+            <span className="text-sm tabular-nums"><span className="font-bold text-ink-900 dark:text-ink-50">{percent}%</span><span className="text-ink-400 ml-1.5">{count}표</span></span>
+          </div>
+          <div className="h-3 rounded-full bg-ink-100 dark:bg-ink-800 overflow-hidden">
+            <div className={`h-full rounded-full bar-anim ${colors[rank % colors.length]}`} style={{ width: percent + '%' }} />
+          </div>
+        </div>
+      );
+    }
+
+    function RatingResult({ result }) {
+      const avg = result.average_score || 0;
+      const max = Math.max(1, ...result.distribution.map(d => d.count));
+      return (
+        <div className="space-y-5">
+          <div className="text-center py-4 bg-accent-50 dark:bg-accent-950/30 rounded-2xl">
+            <div className="text-4xl font-extrabold text-accent-700 dark:text-accent-300">{avg.toFixed(1)}<span className="text-xl text-accent-300 dark:text-accent-600"> / 5</span></div>
+            <div className="flex justify-center gap-1 mt-2">
+              {[1, 2, 3, 4, 5].map(s => {
+                const on = s <= Math.round(avg);
+                return (
+                  <svg key={s} className={`w-6 h-6 ${on ? 'text-amber-400' : 'text-ink-200 dark:text-ink-700'}`}
+                    viewBox="0 0 24 24" fill={on ? 'currentColor' : 'none'} stroke="currentColor"
+                    strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M12 2.5l2.9 5.88 6.49.94-4.7 4.58 1.11 6.46L12 17.3l-5.8 3.05 1.1-6.46L2.6 9.32l6.5-.94L12 2.5z" />
+                  </svg>
+                );
+              })}
+            </div>
+            <p className="text-xs text-ink-500 dark:text-ink-400 mt-2">평균 만족도 · {result.total_responses}명 응답</p>
+          </div>
+          <div className="space-y-2.5">
+            {result.distribution.slice().reverse().map(d => (
+              <div key={d.score} className="flex items-center gap-3 fade-up">
+                <span className="w-10 text-sm font-medium text-ink-600 dark:text-ink-300">{d.score}점</span>
+                <div className="flex-1 h-2.5 rounded-full bg-ink-100 dark:bg-ink-800 overflow-hidden">
+                  <div className="h-full bg-amber-400 rounded-full bar-anim" style={{ width: (d.count / max) * 100 + '%' }} />
+                </div>
+                <span className="w-12 text-right text-xs text-ink-500 dark:text-ink-400 tabular-nums">{d.count}명</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    function TextResult({ result }) {
+      if (!result.text_answers || !result.text_answers.length)
+        return <CenterState icon={<Icons.MessageSquare className="w-8 h-8" />} title="아직 응답이 없습니다" desc="첫 번째 의견을 남겨보세요." />;
+      const ago = (at) => {
+        const m = Math.floor((Date.now() - at) / 60000);
+        if (m < 1) return '방금 전'; if (m < 60) return `${m}분 전`; return `${Math.floor(m / 60)}시간 전`;
+      };
+      return (
+        <div className="space-y-3">
+          <p className="text-xs text-ink-400">최신 응답 {result.text_answers.length}건</p>
+          {result.text_answers.map(t => (
+            <Card key={t.id} className="p-4 fade-up">
+              <p className="text-ink-700 dark:text-ink-200 text-sm leading-relaxed">{t.text}</p>
+              <p className="text-xs text-ink-400 mt-2">{ago(t.at)}</p>
+            </Card>
+          ))}
+        </div>
+      );
+    }
+
+    // 결과 본문 (poll_type 분기) — 8~12초 폴링으로 refetch
+    function ResultsView({ pollCode, pollType, embedded }) {
+      const { data, loading, error, refetch } = useAsync(() => api.getResults(pollCode), [pollCode]);
+      useEffect(() => {
+        let id;
+        const schedule = () => { id = setTimeout(() => { refetch().finally(schedule); }, jitter(8000)); };
+        schedule();
+        return () => clearTimeout(id);
+      }, [pollCode, refetch]);
+
+      if (loading) return <div className="space-y-3">{[0, 1, 2].map(i => <div key={i} className="sk h-10 rounded-xl bg-ink-100 dark:bg-ink-800" />)}</div>;
+      if (error) return <CenterState icon={<Icons.AlertTriangle className="w-8 h-8" />} tone="red" title="결과를 불러오지 못했습니다" action={<Button variant="secondary" onClick={refetch}>다시 시도</Button>} />;
+
+      return (
+        <div className={embedded ? '' : 'space-y-1'}>
+          <div className="flex items-center justify-between mb-4">
+            <span className="text-sm font-semibold text-ink-500 dark:text-ink-400">총 {data.total_responses}명 참여</span>
+            <span className="inline-flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />실시간 업데이트</span>
+          </div>
+          {pollType === 'rating' ? <RatingResult result={data} />
+            : pollType === 'short_text' ? <TextResult result={data} />
+              : (data.options || []).length === 0
+                ? <CenterState icon={<Icons.BarChart className="w-8 h-8" />} title="아직 응답이 없습니다" />
+                : <div className="space-y-4">{data.options.map((o, i) => <ResultBar key={o.option_id} label={o.label} percent={o.percent} count={o.count} rank={i} />)}</div>}
+        </div>
+      );
+    }
+
+    // ========================================
+    // ✍️  응답 입력 위젯 (poll_type 별)
+    // ========================================
+    function SingleChoiceInput({ options, value, onChange }) {
+      return (
+        <div className="space-y-2.5" role="radiogroup">
+          {options.map(o => {
+            const sel = value === o.id;
+            return (
+              <button key={o.id} type="button" role="radio" aria-checked={sel} onClick={() => onChange(o.id)}
+                className={`w-full flex items-center gap-3 p-4 rounded-xl border-2 text-left transition active:scale-[.99] ${sel ? 'border-accent-600 bg-accent-50 dark:border-accent-400 dark:bg-accent-950/40' : 'border-ink-200 dark:border-ink-700 bg-white dark:bg-ink-900 hover:border-ink-300 dark:hover:border-ink-600'}`}>
+                <span className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 ${sel ? 'border-accent-600 dark:border-accent-400' : 'border-ink-300 dark:border-ink-600'}`}>
+                  {sel && <span className="w-2.5 h-2.5 rounded-full bg-accent-600 dark:bg-accent-400" />}
+                </span>
+                <span className={`text-base ${sel ? 'font-semibold text-accent-900 dark:text-accent-200' : 'text-ink-700 dark:text-ink-200'}`}>{o.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      );
+    }
+
+    function MultipleChoiceInput({ options, value, onChange }) {
+      const set = new Set(value);
+      const toggle = (id) => { const n = new Set(set); n.has(id) ? n.delete(id) : n.add(id); onChange([...n]); };
+      return (
+        <div className="space-y-2.5">
+          {options.map(o => {
+            const sel = set.has(o.id);
+            return (
+              <button key={o.id} type="button" role="checkbox" aria-checked={sel} onClick={() => toggle(o.id)}
+                className={`w-full flex items-center gap-3 p-4 rounded-xl border-2 text-left transition active:scale-[.99] ${sel ? 'border-accent-600 bg-accent-50 dark:border-accent-400 dark:bg-accent-950/40' : 'border-ink-200 dark:border-ink-700 bg-white dark:bg-ink-900 hover:border-ink-300 dark:hover:border-ink-600'}`}>
+                <span className={`w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 ${sel ? 'border-accent-600 bg-accent-600 dark:border-accent-400 dark:bg-accent-400' : 'border-ink-300 dark:border-ink-600'}`}>
+                  {sel && <svg className="w-3.5 h-3.5 text-white dark:text-ink-900" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M16.7 5.3a1 1 0 010 1.4l-8 8a1 1 0 01-1.4 0l-4-4a1 1 0 011.4-1.4L8 12.6l7.3-7.3a1 1 0 011.4 0z" clipRule="evenodd" /></svg>}
+                </span>
+                <span className={`text-base ${sel ? 'font-semibold text-accent-900 dark:text-accent-200' : 'text-ink-700 dark:text-ink-200'}`}>{o.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      );
+    }
+
+    function RatingInput({ value, onChange }) {
+      const [hover, setHover] = useState(0);
+      const labels = ['매우 낮음', '낮음', '보통', '높음', '매우 높음'];
+      return (
+        <div>
+          <div className="flex justify-center gap-2">
+            {[1, 2, 3, 4, 5].map(s => {
+              const active = (hover || value) >= s;
+              return (
+                <button key={s} type="button" aria-label={`${s}점`} onClick={() => onChange(s)}
+                  onMouseEnter={() => setHover(s)} onMouseLeave={() => setHover(0)}
+                  className={`transition active:scale-90 ${active ? 'text-amber-400' : 'text-ink-200 dark:text-ink-700'}`}>
+                  <svg className="w-10 h-10" viewBox="0 0 24 24" fill={active ? 'currentColor' : 'none'}
+                    stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M12 2.5l2.9 5.88 6.49.94-4.7 4.58 1.11 6.46L12 17.3l-5.8 3.05 1.1-6.46L2.6 9.32l6.5-.94L12 2.5z" />
+                  </svg>
+                </button>
+              );
+            })}
+          </div>
+          <p className="text-center text-sm font-medium text-ink-500 dark:text-ink-400 mt-3 h-5">{value ? labels[value - 1] : '별점을 선택해주세요'}</p>
+        </div>
+      );
+    }
+
+    function ShortTextInput({ value, onChange, max = 200 }) {
+      return (
+        <div>
+          <textarea value={value} onChange={e => onChange(e.target.value.slice(0, max))} rows={4}
+            placeholder="의견을 자유롭게 입력해주세요"
+            className="w-full p-4 rounded-xl border-2 border-ink-200 dark:border-ink-700 bg-white dark:bg-ink-900 text-ink-800 dark:text-ink-100 placeholder-ink-400 dark:placeholder-ink-500 focus:border-accent-500 dark:focus:border-accent-400 focus:ring-4 focus:ring-accent-100 dark:focus:ring-accent-900/40 outline-none text-base resize-none" />
+          <div className="text-right text-xs text-ink-400 mt-1.5 tabular-nums">{value.length} / {max}</div>
+        </div>
+      );
+    }
+
+    // 단일 질문 렌더 + 검증 (bundle 에서도 재사용)
+    function QuestionField({ q, value, onChange }) {
+      const t = q.poll_type;
+      if (t === 'single_choice') return <SingleChoiceInput options={q.options} value={value || ''} onChange={onChange} />;
+      if (t === 'multiple_choice') return <MultipleChoiceInput options={q.options} value={value || []} onChange={onChange} />;
+      if (t === 'rating') return <RatingInput value={value || 0} onChange={onChange} />;
+      if (t === 'short_text') return <ShortTextInput value={value || ''} onChange={onChange} max={q.max_length || 200} />;
+      return null;
+    }
+    function isAnswered(q, value) {
+      const t = q.poll_type;
+      if (t === 'single_choice' || t === 'rating') return !!value;
+      if (t === 'multiple_choice') return Array.isArray(value) && value.length > 0;
+      if (t === 'short_text') return !!(value && value.trim());
+      return false;
+    }
+    function toAnswer(q, value) {
+      const t = q.poll_type;
+      if (t === 'single_choice') return [{ option_id: value }];
+      if (t === 'multiple_choice') return (value || []).map(id => ({ option_id: id }));
+      if (t === 'rating') return [{ answer_number: value }];
+      if (t === 'short_text') return [{ answer_text: (value || '').trim() }];
+      return [];
+    }
+
+    // ========================================
+    // 📄 PAGES
+    // ========================================
+
+    // --- 세션 스케줄 정렬 (날짜 → 시간): "8월 20일" / "11:30~12:20" 자유 텍스트 파싱 ---
+    function sessionSortKey(s) {
+      const d = String(s.session_date || '');
+      const md = d.match(/(\d+)\s*월\s*(\d+)\s*일/);
+      let dateKey = Number.MAX_SAFE_INTEGER;
+      if (md) dateKey = parseInt(md[1], 10) * 100 + parseInt(md[2], 10);
+      else if (d) { const t = Date.parse(d); if (!isNaN(t)) dateKey = t; }
+      const tm = String(s.time_range || '').match(/(\d{1,2}):(\d{2})/);
+      const timeKey = tm ? parseInt(tm[1], 10) * 60 + parseInt(tm[2], 10) : 99999;
+      return { dateKey, timeKey };
+    }
+    function sortSessionsBySchedule(list) {
+      return [...(list || [])].sort((a, b) => {
+        const ka = sessionSortKey(a), kb = sessionSortKey(b);
+        return ka.dateKey - kb.dateKey || ka.timeKey - kb.timeKey
+          || String(a.title || '').localeCompare(String(b.title || ''), 'ko');
+      });
+    }
+
+    // --- 프로젝트 랜딩 #/e/:projectCode ---
+    function ProjectLanding({ projectCode }) {
+      const { navigate, query } = useRouter();
+      const { data, loading, error, refetch } = useAsync(() => api.getProject(projectCode), [projectCode]);
+      // QR 딥링크: ?track={track_id}&date={날짜} 로 초기 필터 프리셋
+      const [selectedDate, setSelectedDate] = useState(query.date || null);
+      const [selectedTrack, setSelectedTrack] = useState(query.track || null);
+      // 존재하는 날짜 목록 (날짜순 정렬)
+      const dates = useMemo(() => {
+        const seen = new Map();
+        (data?.sessions || []).forEach(s => { if (s.session_date && !seen.has(s.session_date)) seen.set(s.session_date, sessionSortKey(s).dateKey); });
+        return [...seen.entries()].sort((a, b) => a[1] - b[1]).map(e => e[0]);
+      }, [data]);
+      // 선택 날짜로 필터 → 트랙별 그룹 (첫 등장 순서 유지) + 그룹 내 시간 정렬
+      const groups = useMemo(() => {
+        const src = (data?.sessions || []).filter(s => !selectedDate || s.session_date === selectedDate);
+        const order = [], map = new Map();
+        src.forEach(s => {
+          const key = s.track_id || s.track || '__none__';
+          if (!map.has(key)) { map.set(key, { key, name: s.track || '기타', items: [] }); order.push(key); }
+          map.get(key).items.push(s);
+        });
+        const arr = order.map(k => map.get(k));
+        arr.forEach(g => {
+          g.items = sortSessionsBySchedule(g.items);
+          const rc = {};
+          g.items.forEach(s => { if (s.room) rc[s.room] = (rc[s.room] || 0) + 1; });
+          const top = Object.entries(rc).sort((a, b) => b[1] - a[1])[0];
+          g.room = top ? top[0] : '';
+        });
+        return arr;
+      }, [data, selectedDate]);
+      if (loading) return <Skeleton />;
+      if (error) return <Page header={<EventHeader title="오류" />}><CenterState icon={<Icons.AlertTriangle className="w-8 h-8" />} tone="red" title="행사 정보를 불러오지 못했습니다" action={<Button variant="secondary" onClick={refetch}>다시 시도</Button>} /></Page>;
+      const live = (data.livePolls || []).filter(p => p.status === 'live');
+      const visibleGroups = selectedTrack ? groups.filter(g => g.key === selectedTrack) : groups;
+      const totalInView = groups.reduce((n, g) => n + g.items.length, 0);
+      const pill = (active) => `px-3 py-1.5 rounded-full text-xs font-semibold transition whitespace-nowrap ${active ? 'bg-accent-600 text-white' : 'bg-ink-100 dark:bg-ink-800 text-ink-600 dark:text-ink-300'}`;
+      const datePill = (active) => `px-3.5 py-2 rounded-lg text-sm font-bold transition whitespace-nowrap ${active ? 'bg-accent-600 text-white shadow-sm' : 'bg-ink-100 dark:bg-ink-800 text-ink-600 dark:text-ink-300'}`;
+      return (
+        <Page header={<EventHeader title={data.title} subtitle={data.subtitle} />}>
+          <SectionTitle main="진행 중인 투표" sub={`${live.length}개`} />
+          {live.length === 0
+            ? <Card className="p-2"><CenterState icon={<Icons.Clock className="w-8 h-8" />} title="현재 진행 중인 투표가 없습니다" desc="세션이 시작되면 이곳에 투표가 표시됩니다." /></Card>
+            : <div className="space-y-3">{live.map(p => <PollCard key={p.code} poll={p} onClick={() => navigate(`/poll/${p.code}`)} />)}</div>}
+
+          {data.sessions && data.sessions.length > 0 && (
+            <>
+              <SectionTitle main="세션" className="mt-8" />
+              {/* 날짜 필터 */}
+              {dates.length > 0 && (
+                <div className="mb-3">
+                  <div className="text-xs font-semibold text-ink-400 dark:text-ink-500 mb-1.5">날짜</div>
+                  <div className="flex flex-wrap gap-2">
+                    <button type="button" onClick={() => { setSelectedDate(null); setSelectedTrack(null); }} className={datePill(!selectedDate)}>전체 날짜</button>
+                    {dates.map(d => (
+                      <button key={d} type="button" onClick={() => { setSelectedDate(d); setSelectedTrack(null); }} className={datePill(selectedDate === d)}>📅 {d}</button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {/* 트랙 필터 */}
+              <div className="mb-4">
+                <div className="text-xs font-semibold text-ink-400 dark:text-ink-500 mb-1.5">트랙</div>
+                <div className="flex flex-wrap gap-2">
+                  <button type="button" onClick={() => setSelectedTrack(null)} className={pill(!selectedTrack)}>전체 {totalInView}</button>
+                  {groups.map(g => (
+                    <button key={g.key} type="button" onClick={() => setSelectedTrack(g.key)} className={pill(selectedTrack === g.key)}>{g.name} {g.items.length}</button>
+                  ))}
+                </div>
+              </div>
+              <div className="space-y-6">
+                {visibleGroups.map(g => (
+                  <div key={g.key}>
+                    <div className="mb-2 px-1 flex flex-wrap items-center gap-x-2">
+                      <span className="text-xs font-bold text-accent-600 dark:text-accent-400">{g.name}</span>
+                      {g.room && <span className="text-xs font-semibold text-ink-500 dark:text-ink-400">📍 {g.room}</span>}
+                      <span className="text-xs text-ink-400 dark:text-ink-500">· {g.items.length}개 세션</span>
+                    </div>
+                    <div className="space-y-3">
+                      {g.items.map(s => (
+                        <Card key={s.code} className="p-4 flex items-center justify-between active:scale-[.99] transition cursor-pointer" onClick={() => navigate(`/s/${s.code}`)}>
+                          <div className="min-w-0">
+                            {(s.session_date || s.time_range || (s.room && s.room !== g.room)) && (
+                              <div className="text-xs text-ink-400 dark:text-ink-500 mb-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                                {s.session_date && <span>📅 {s.session_date}</span>}
+                                {s.time_range && <span>🕐 {s.time_range}</span>}
+                                {s.room && s.room !== g.room && <span>📍 {s.room}</span>}
+                              </div>
+                            )}
+                            <div className="font-semibold text-ink-800 dark:text-ink-100 truncate">{s.title}</div>
+                            <div className="text-sm text-ink-500 dark:text-ink-400">{s.speaker}</div>
+                          </div>
+                          <Chevron />
+                        </Card>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </Page>
+      );
+    }
+
+    // --- 세션 페이지 #/s/:sessionCode ---
+    function SessionPage({ sessionCode }) {
+      const { navigate } = useRouter();
+      const { data, loading, error, refetch } = useAsync(() => api.getSession(sessionCode), [sessionCode]);
+      if (loading) return <Skeleton />;
+      if (error) return <Page header={<EventHeader title="오류" />}><CenterState icon={<Icons.AlertTriangle className="w-8 h-8" />} tone="red" title="세션 정보를 불러오지 못했습니다" action={<Button variant="secondary" onClick={refetch}>다시 시도</Button>} /></Page>;
+      const live = (data.livePolls || []).filter(p => p.status === 'live');
+      return (
+        <Page header={<EventHeader title={data.title} subtitle={`${data.track} · ${data.speaker}`} />}>
+          {(data.session_date || data.time_range || data.room) && (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-ink-500 dark:text-ink-400 mb-4 -mt-1">
+              {data.session_date && <span>📅 {data.session_date}</span>}
+              {data.time_range && <span>🕐 {data.time_range}</span>}
+              {data.room && <span>📍 {data.room}</span>}
+            </div>
+          )}
+          <SectionTitle main="이 세션의 투표" sub={`${live.length}개`} />
+          {live.length === 0
+            ? <Card className="p-2"><CenterState icon={<Icons.Clock className="w-8 h-8" />} title="현재 진행 중인 투표가 없습니다" desc="강연자가 투표를 시작하면 표시됩니다." /></Card>
+            : <div className="space-y-3">{live.map(p => <PollCard key={p.code} poll={p} onClick={() => navigate(`/poll/${p.code}`)} />)}</div>}
+        </Page>
+      );
+    }
+
+    function SectionTitle({ main, sub, className = '' }) {
+      return (
+        <div className={`flex items-baseline justify-between mb-3 ${className}`}>
+          <h2 className="text-base font-bold text-ink-800 dark:text-ink-100">{main}</h2>
+          {sub != null && <span className="text-sm text-ink-400">{sub}</span>}
+        </div>
+      );
+    }
+    function Chevron() {
+      return <Icons.ChevronRight className="w-5 h-5 text-ink-300 dark:text-ink-600 shrink-0" />;
+    }
+
+    const typeMeta = {
+      single_choice: { Icon: Icons.CircleDot, label: '단일 선택' },
+      multiple_choice: { Icon: Icons.CheckSquare, label: '복수 선택' },
+      rating: { Icon: Icons.Star, label: '만족도 평가' },
+      short_text: { Icon: Icons.Pencil, label: '주관식' },
+      bundle: { Icon: Icons.Clipboard, label: '설문' },
+    };
+
+    // poll 유형 표시 (라인 아이콘 + 라벨)
+    function PollTypeLabel({ type, extra }) {
+      const m = typeMeta[type] || typeMeta.single_choice;
+      return (
+        <span className="inline-flex items-center gap-1 text-xs text-ink-400">
+          <m.Icon className="w-3.5 h-3.5" />{m.label}{extra}
+        </span>
+      );
+    }
+
+    function PollCard({ poll, onClick }) {
+      const answered = LS.hasAnswered(poll.code);
+      return (
+        <Card className="p-4 active:scale-[.99] transition cursor-pointer fade-up" onClick={onClick}>
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 mb-1.5">
+                <StatusBadge status={poll.status} />
+                <PollTypeLabel type={poll.poll_type} />
+                {answered && <Badge tone="indigo">참여 완료</Badge>}
+              </div>
+              <h3 className="font-semibold text-ink-800 dark:text-ink-100 leading-snug">{poll.question}</h3>
+              {poll.session_title && <p className="text-xs text-ink-400 mt-1">{poll.session_title}</p>}
+            </div>
+            <Chevron />
+          </div>
+        </Card>
+      );
+    }
+
+    // --- Poll 참여 화면 #/poll/:pollCode ---
+    function PollPage({ pollCode }) {
+      const { query, navigate } = useRouter();
+      const token = query.token || null;
+      const { data: poll, loading, error, refetch } = useAsync(() => api.getPoll(pollCode, token), [pollCode, token]);
+
+      const [phase, setPhase] = useState('form'); // form | done
+      const [showResults, setShowResults] = useState(false);
+      const [stay, setStay] = useState(false); // '결과 보기' 선택 시 자동 이동 취소
+      const alreadyAnswered = LS.hasAnswered(pollCode);
+
+      // 제출 완료 후 2초 뒤 자동으로 행사 목록(랜딩)으로 이동
+      useEffect(() => {
+        if (phase !== 'done' || stay) return;
+        const dest = poll && poll.project_code ? `/e/${poll.project_code}` : '/';
+        const t = setTimeout(() => navigate(dest), 2000);
+        return () => clearTimeout(t);
+      }, [phase, stay, poll, navigate]);
+
+      if (loading) return <Skeleton />;
+      if (error) {
+        const notFound = error.code === 404;
+        return <Page header={<EventHeader title="Live Poll" />}>
+          <CenterState icon={notFound ? <Icons.Search className="w-8 h-8" /> : <Icons.AlertTriangle className="w-8 h-8" />} tone="red"
+            title={notFound ? '투표를 찾을 수 없습니다' : '불러오기 실패'}
+            desc={notFound ? 'QR 코드나 링크를 다시 확인해주세요.' : '네트워크 상태를 확인해주세요.'}
+            action={!notFound && <Button variant="secondary" onClick={refetch}>다시 시도</Button>} />
+        </Page>;
+      }
+
+      const header = <EventHeader title={poll.title} subtitle={poll.session_title} />;
+
+      // 뉴스레터 묶음 설문은 별도 컴포넌트
+      if (poll.poll_type === 'bundle') {
+        return <NewsletterSurvey poll={poll} token={token} header={header} />;
+      }
+
+      // draft / scheduled — 접근 불가
+      if (poll.status === 'draft' || poll.status === 'scheduled') {
+        return <Page header={header}><CenterState icon={<Icons.Lock className="w-8 h-8" />} tone="amber"
+          title={poll.status === 'scheduled' ? '아직 시작되지 않은 투표입니다' : '준비 중인 투표입니다'}
+          desc="강연자가 투표를 시작하면 참여하실 수 있습니다." /></Page>;
+      }
+
+      // 이미 응답함 → 안내 + 결과(공개 시)
+      if (alreadyAnswered && phase === 'form') {
+        return <Page header={header}>
+          <CenterState icon={<Icons.Check className="w-8 h-8" />} tone="green" title="이미 참여하셨습니다" desc="응답은 한 번만 제출할 수 있습니다."
+            action={poll.show_results
+              ? <Button onClick={() => navigate(`/results/${pollCode}`)}>결과 보기</Button>
+              : <Badge tone="slate">결과는 비공개입니다</Badge>} />
+        </Page>;
+      }
+
+      // closed — 응답 종료
+      if (poll.status === 'closed') {
+        return <Page header={header}>
+          <Card className="p-5">
+            <CenterState icon={<Icons.Flag className="w-8 h-8" />} title="투표가 종료되었습니다" desc={poll.show_results ? '아래에서 결과를 확인하세요.' : '결과는 공개되지 않았습니다.'} />
+          </Card>
+          {poll.show_results && <div className="mt-5"><h2 className="text-base font-bold text-ink-800 dark:text-ink-100 mb-4">{poll.question}</h2><ResultsView pollCode={pollCode} pollType={poll.poll_type} embedded /></div>}
+        </Page>;
+      }
+
+      // 제출 완료 화면
+      if (phase === 'done') {
+        const toList = () => navigate(poll.project_code ? `/e/${poll.project_code}` : '/');
+        return <Page header={header}>
+          <SubmittedView poll={poll}
+            showResults={showResults}
+            onShowResults={() => { setShowResults(true); setStay(true); }}
+            onBackToList={toList}
+            pollCode={pollCode} />
+        </Page>;
+      }
+
+      // 라이브 참여 폼
+      return <Page header={header}>
+        <PollForm poll={poll} token={token} onDone={() => { LS.markAnswered(pollCode); setPhase('done'); }} />
+      </Page>;
+    }
+
+    function PollForm({ poll, token, onDone }) {
+      const [value, setValue] = useState(poll.poll_type === 'multiple_choice' ? [] : poll.poll_type === 'rating' ? 0 : '');
+      const [submitting, setSubmitting] = useState(false);
+      const [err, setErr] = useState(null);
+      const [touched, setTouched] = useState(false);
+      const valid = isAnswered(poll, value);
+
+      const submit = async () => {
+        setTouched(true);
+        if (!valid) return;
+        setSubmitting(true); setErr(null);
+        try {
+          await api.submitResponse(poll.code, { respondent_key: LS.key(), recipient_token: token || undefined, answers: toAnswer(poll, value) });
+          onDone();
+        } catch (e) { setErr('제출에 실패했습니다. 다시 시도해주세요.'); setSubmitting(false); }
+      };
+
+      return (
+        <div className="fade-up">
+          <div className="flex items-center gap-2 mb-2">
+            <StatusBadge status="live" />
+            <PollTypeLabel type={poll.poll_type} extra={poll.poll_type === 'multiple_choice' ? ' · 복수 선택 가능' : ''} />
+          </div>
+          <h2 className="text-xl font-bold text-ink-900 dark:text-ink-50 leading-snug mb-5">{poll.question}</h2>
+
+          <QuestionField q={poll} value={value} onChange={setValue} />
+
+          {touched && !valid && <p className="text-sm text-rose-600 dark:text-rose-400 mt-3">응답을 선택/입력한 후 제출해주세요.</p>}
+          {err && <p className="text-sm text-rose-600 dark:text-rose-400 mt-3">{err}</p>}
+
+          <div className="sticky bottom-0 pt-5 pb-2 mt-2 bg-gradient-to-t from-ink-50 via-ink-50 dark:from-ink-950 dark:via-ink-950">
+            <Button className="w-full" loading={submitting} disabled={touched && !valid} onClick={submit}>
+              {submitting ? '제출 중…' : '제출하기'}
+            </Button>
+          </div>
+        </div>
+      );
+    }
+
+    function SubmittedView({ poll, showResults, onShowResults, onBackToList, pollCode }) {
+      return (
+        <div>
+          <div className="flex flex-col items-center text-center py-8">
+            <div className="w-20 h-20 rounded-full bg-emerald-100 dark:bg-emerald-500/15 flex items-center justify-center pop">
+              <svg className="w-10 h-10 text-emerald-600 dark:text-emerald-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+            </div>
+            <h2 className="text-xl font-bold text-ink-900 dark:text-ink-50 mt-5">응답이 제출되었습니다</h2>
+            <p className="text-ink-500 dark:text-ink-400 text-sm mt-1.5">소중한 의견 감사합니다.</p>
+            <div className="flex flex-col items-center gap-2 mt-6 w-full max-w-xs">
+              {poll.show_results && !showResults &&
+                <Button className="w-full" variant="secondary" onClick={onShowResults}>결과 보기</Button>}
+              <Button className="w-full" onClick={onBackToList}>목록으로 돌아가기</Button>
+            </div>
+            {!showResults &&
+              <p className="mt-3 text-xs text-ink-400">잠시 후 자동으로 목록으로 돌아갑니다…</p>}
+          </div>
+          {poll.show_results && showResults &&
+            <div className="mt-2 fade-up">
+              <h3 className="text-base font-bold text-ink-800 dark:text-ink-100 mb-4">{poll.question}</h3>
+              <ResultsView pollCode={pollCode} pollType={poll.poll_type} embedded />
+            </div>}
+        </div>
+      );
+    }
+
+    // --- 결과 화면 #/results/:pollCode (직접 진입용) ---
+    function ResultsPage({ pollCode }) {
+      const { data: poll, loading, error } = useAsync(() => api.getPoll(pollCode), [pollCode]);
+      if (loading) return <Skeleton />;
+      if (error) return <Page header={<EventHeader title="결과" />}><CenterState icon={<Icons.AlertTriangle className="w-8 h-8" />} tone="red" title="결과를 불러올 수 없습니다" /></Page>;
+      const header = <EventHeader title={poll.title} subtitle={poll.session_title} />;
+      if (!poll.show_results)
+        return <Page header={header}><CenterState icon={<Icons.Lock className="w-8 h-8" />} tone="amber" title="결과가 비공개입니다" desc="강연자가 결과를 공개하면 확인하실 수 있습니다." /></Page>;
+      return <Page header={header}>
+        <h2 className="text-xl font-bold text-ink-900 dark:text-ink-50 leading-snug mb-5">{poll.question}</h2>
+        <ResultsView pollCode={pollCode} pollType={poll.poll_type} embedded />
+      </Page>;
+    }
+
+    // --- 뉴스레터 후속 설문 / 묶음 설문 (질문 묶음) ---
+    // submitFn(flatAnswers) 로 제출 경로를 주입 — 미지정 시 기존 뉴스레터 Poll 경로(api.submitResponse) 사용.
+    function NewsletterSurvey({ poll, token, header, submitFn }) {
+      const { navigate } = useRouter();
+      const [answers, setAnswers] = useState({});
+      const [submitting, setSubmitting] = useState(false);
+      const [touched, setTouched] = useState(false);
+      const [done, setDone] = useState(LS.hasAnswered(poll.code));
+      const [err, setErr] = useState(null);
+
+      // 토큰 없이 행사에서 진입한 경우에만 목록으로 자동 복귀 (이메일 링크는 돌아갈 목록 없음)
+      const backToList = (poll.project_code && !token) ? () => navigate(`/e/${poll.project_code}`) : null;
+      useEffect(() => {
+        if (!done || !backToList) return;
+        const t = setTimeout(backToList, 2000);
+        return () => clearTimeout(t);
+      }, [done]);
+
+      const set = (qid, v) => setAnswers(a => ({ ...a, [qid]: v }));
+      const missing = poll.questions.filter(q => q.required && !isAnswered(q, answers[q.id]));
+      const valid = missing.length === 0;
+
+      const submit = async () => {
+        setTouched(true);
+        if (!valid) return;
+        setSubmitting(true); setErr(null);
+        try {
+          // 각 질문의 답을 하나의 answers 배열로 평탄화 (q 식별 위해 question_id 부여)
+          const flat = poll.questions.flatMap(q =>
+            isAnswered(q, answers[q.id]) ? toAnswer(q, answers[q.id]).map(a => ({ question_id: q.id, ...a })) : []);
+          const body = { respondent_key: LS.key(), recipient_token: token || undefined, answers: flat };
+          // submitFn 주입 시 그 경로로(설문=api.submitSurvey), 아니면 기존 뉴스레터 Poll 경로
+          if (submitFn) await submitFn(body);
+          else await api.submitResponse(poll.code, body);
+          LS.markAnswered(poll.code);
+          setDone(true);
+        } catch (e) { setErr('제출에 실패했습니다. 다시 시도해주세요.'); setSubmitting(false); }
+      };
+
+      if (done) return <Page header={header}>
+        <div className="flex flex-col items-center text-center py-12">
+          <div className="w-20 h-20 rounded-full bg-emerald-100 dark:bg-emerald-500/15 flex items-center justify-center pop">
+            <svg className="w-10 h-10 text-emerald-600 dark:text-emerald-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+          </div>
+          <h2 className="text-xl font-bold text-ink-900 dark:text-ink-50 mt-5">설문이 제출되었습니다</h2>
+          <p className="text-ink-500 dark:text-ink-400 text-sm mt-1.5 max-w-xs">참여해 주셔서 감사합니다. 보내주신 의견은 더 나은 행사를 만드는 데 활용됩니다.</p>
+          {backToList &&
+            <div className="mt-6 w-full max-w-xs">
+              <Button className="w-full" onClick={backToList}>목록으로 돌아가기</Button>
+              <p className="mt-3 text-xs text-ink-400">잠시 후 자동으로 목록으로 돌아갑니다…</p>
+            </div>}
+        </div>
+      </Page>;
+
+      return (
+        <Page header={header}>
+          <div className="fade-up">
+            {token
+              ? <Badge tone="indigo"><Icons.Check className="w-3.5 h-3.5" />식별 응답 (수신자 확인됨)</Badge>
+              : <Badge tone="slate">익명 응답</Badge>}
+            <p className="text-ink-600 dark:text-ink-300 text-sm mt-3 mb-6 leading-relaxed">{poll.question}</p>
+
+            <div className="space-y-5">
+              {poll.questions.map((q, i) => {
+                const showErr = touched && q.required && !isAnswered(q, answers[q.id]);
+                return (
+                  <Card key={q.id} className={`p-5 ${showErr ? 'ring-2 ring-rose-300 dark:ring-rose-500/50' : ''}`}>
+                    <div className="flex items-start gap-2 mb-3">
+                      <span className="text-accent-600 dark:text-accent-400 font-bold text-sm">{i + 1}.</span>
+                      <h3 className="font-semibold text-ink-800 dark:text-ink-100 leading-snug">
+                        {q.question}
+                        {q.required && <span className="text-rose-500 dark:text-rose-400 ml-1">*</span>}
+                      </h3>
+                    </div>
+                    <QuestionField q={q} value={answers[q.id]} onChange={(v) => set(q.id, v)} />
+                    {showErr && <p className="text-sm text-rose-600 dark:text-rose-400 mt-2">필수 응답 항목입니다.</p>}
+                  </Card>
+                );
+              })}
+            </div>
+
+            {poll.privacy_notice &&
+              <div className="mt-5 p-4 rounded-xl bg-ink-100 dark:bg-ink-800/60 text-xs text-ink-500 dark:text-ink-400 leading-relaxed">
+                <p className="font-semibold text-ink-600 dark:text-ink-300 mb-1 inline-flex items-center gap-1.5"><Icons.FileText className="w-3.5 h-3.5" />개인정보 수집·이용 안내</p>
+                {poll.privacy_notice}
+              </div>}
+
+            {err && <p className="text-sm text-rose-600 dark:text-rose-400 mt-4">{err}</p>}
+
+            <div className="sticky bottom-0 pt-5 pb-2 mt-3 bg-gradient-to-t from-ink-50 via-ink-50 dark:from-ink-950 dark:via-ink-950">
+              <Button className="w-full" loading={submitting} onClick={submit}>{submitting ? '제출 중…' : '설문 제출하기'}</Button>
+            </div>
+          </div>
+        </Page>
+      );
+    }
+
+    // --- 묶음 설문 참여 화면 #/survey/:code (?token=) ---
+    // 서버가 bundle 형태로 반환하므로 NewsletterSurvey 를 재사용. 제출은 api.submitSurvey 로 분기.
+    function SurveyPage({ code }) {
+      const { query } = useRouter();
+      const token = query.token || null;
+      const { data: poll, loading, error, refetch } = useAsync(() => api.getSurvey(code, token), [code, token]);
+
+      if (loading) return <Skeleton />;
+      if (error) {
+        const notFound = error.code === 404;
+        return <Page header={<EventHeader title="설문" />}>
+          <CenterState icon={notFound ? <Icons.Search className="w-8 h-8" /> : <Icons.AlertTriangle className="w-8 h-8" />} tone="red"
+            title={notFound ? '설문을 찾을 수 없습니다' : '불러오기 실패'}
+            desc={notFound ? '링크나 QR 코드를 다시 확인해주세요.' : '네트워크 상태를 확인해주세요.'}
+            action={!notFound && <Button variant="secondary" onClick={refetch}>다시 시도</Button>} />
+        </Page>;
+      }
+
+      const header = <EventHeader title={poll.title} subtitle={poll.session_title} />;
+
+      // draft / scheduled — 접근 불가
+      if (poll.status === 'draft' || poll.status === 'scheduled') {
+        return <Page header={header}><CenterState icon={<Icons.Lock className="w-8 h-8" />} tone="amber"
+          title={poll.status === 'scheduled' ? '아직 시작되지 않은 설문입니다' : '준비 중인 설문입니다'}
+          desc="설문이 시작되면 참여하실 수 있습니다." /></Page>;
+      }
+
+      // 이미 응답함
+      if (LS.hasAnswered(poll.code)) {
+        return <Page header={header}><CenterState icon={<Icons.Check className="w-8 h-8" />} tone="green"
+          title="이미 참여하셨습니다" desc="설문은 한 번만 제출할 수 있습니다." /></Page>;
+      }
+
+      // live 가 아니면(=closed 등) 종료 안내
+      if (poll.status !== 'live') {
+        return <Page header={header}><CenterState icon={<Icons.Flag className="w-8 h-8" />}
+          title="설문이 종료되었습니다" desc="참여 기간이 마감되었습니다." /></Page>;
+      }
+
+      return <NewsletterSurvey poll={poll} token={token} header={header}
+        submitFn={(body) => api.submitSurvey(poll.code, body)} />;
+    }
+
+    // --- 홈 (데모 안내) ---
+    function Home() {
+      const { navigate } = useRouter();
+      const links = [
+        [Icons.FileText, '프로젝트 랜딩', '/e/mendix2026', '행사 단일 QR 진입'],
+        [Icons.Mic, '세션 페이지', '/s/keynote', 'Keynote 세션'],
+        [Icons.CircleDot, '단일 선택 Poll', '/poll/topic2026', '관심 주제 투표'],
+        [Icons.CheckSquare, '복수 선택 Poll', '/poll/tools-use', '사용 도구'],
+        [Icons.Star, '만족도 Poll', '/poll/session-rate', '5점 척도'],
+        [Icons.Pencil, '주관식 Poll', '/poll/qna-free', '자유 의견'],
+        [Icons.Flag, '종료된 Poll', '/poll/morning-poll', 'closed 상태'],
+        [Icons.Clipboard, '뉴스레터 설문(익명)', '/poll/followup-2026', '묶음 설문'],
+        [Icons.Clipboard, '뉴스레터 설문(식별)', '/poll/followup-2026?token=abc123', 'token 포함'],
+        [Icons.Clipboard, '묶음 설문 참여(익명)', '/survey/test', 'surveys 엔드포인트'],
+        [Icons.Clipboard, '묶음 설문 참여(식별)', '/survey/test?token=abc123', 'token 포함'],
+      ];
+      return (
+        <Page header={<EventHeader title="Live Poll" subtitle="데모 · 화면 미리보기" />}>
+          <p className="text-sm text-ink-500 dark:text-ink-400 mb-4">아래 링크로 각 화면을 확인할 수 있습니다. 실제 행사에서는 QR/짧은 URL로 바로 진입합니다.</p>
+          <div className="space-y-2.5">
+            {links.map(([LinkIcon, t, to, d]) => (
+              <Card key={to} className="p-4 flex items-center gap-3 active:scale-[.99] transition cursor-pointer" onClick={() => navigate(to)}>
+                <span className="w-9 h-9 shrink-0 rounded-xl bg-ink-100 dark:bg-ink-800 text-ink-500 dark:text-ink-400 flex items-center justify-center">
+                  <LinkIcon className="w-4 h-4" />
+                </span>
+                <div className="min-w-0 flex-1"><div className="font-semibold text-ink-800 dark:text-ink-100">{t}</div><div className="text-xs text-ink-400 mt-0.5">{d}</div></div>
+                <Chevron />
+              </Card>
+            ))}
+          </div>
+        </Page>
+      );
+    }
+
+    // ========================================
+    // 🚀 APP
+    // ========================================
+    function App() {
+      return (
+        <Router>
+          <Routes
+            routes={[
+              { path: '/', render: () => <Home /> },
+              { path: '/e/:projectCode', render: (p) => <ProjectLanding projectCode={p.projectCode} /> },
+              { path: '/s/:sessionCode', render: (p) => <SessionPage sessionCode={p.sessionCode} /> },
+              { path: '/poll/:pollCode', render: (p) => <PollPage pollCode={p.pollCode} /> },
+              { path: '/survey/:code', render: (p) => <SurveyPage code={p.code} /> },
+              { path: '/results/:pollCode', render: (p) => <ResultsPage pollCode={p.pollCode} /> },
+            ]}
+            fallback={<Page header={<EventHeader title="Live Poll" />}><CenterState icon={<Icons.Search className="w-8 h-8" />} title="페이지를 찾을 수 없습니다" action={<Button variant="secondary" onClick={() => (window.location.hash = '/')}>홈으로</Button>} /></Page>}
+          />
+        </Router>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

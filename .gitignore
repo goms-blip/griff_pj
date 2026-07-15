@@ -1,0 +1,54 @@
+# ── 시크릿 / 환경변수 ───────────────────────────────────────────
+# 이 저장소는 PUBLIC 입니다. 자격증명은 절대 커밋하지 마세요.
+# 키는 .env.local 또는 배포 플랫폼 환경변수로만 주입합니다.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+credentials.json
+service-account*.json
+secrets.y*ml
+
+# ── 의존성 ─────────────────────────────────────────────────────
+node_modules/
+.pnp
+.pnp.js
+__pycache__/
+.venv/
+venv/
+
+# ── 빌드 / 배포 ────────────────────────────────────────────────
+.vercel
+.next/
+dist/
+build/
+out/
+*.tsbuildinfo
+
+# ── 로그 / 캐시 ────────────────────────────────────────────────
+*.log
+npm-debug.log*
+yarn-error.log*
+.cache/
+.chroma_db/
+_tmp_gen/
+
+# ── 에이전트 도구 산출물 ──────────────────────────────────────
+.playwright-mcp/
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+
+# ── OS / 에디터 ────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# ── 대용량 미디어 (GitHub 100MB 제한 — 외부 호스팅 권장) ──────
+*.mp4
+*.mov
+*.webm
+*.zip
