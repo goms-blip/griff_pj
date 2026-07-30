@@ -1242,6 +1242,21 @@
       const seg = project && project.code ? `/e/${project.code}` : `/event/${project && project.id}`;
       return `${window.location.origin}${location.pathname}#${seg}`;
     };
+    // 룸(트랙) QR 이 가리키는 참가자 URL. 룸 번호는 tracks.sort_order(1-based).
+    //  ⚠️ 이 주소는 **고정**이다 — 인쇄해서 룸 입구에 붙여두면 그 안의 세션이 시각에 맞춰 바뀐다.
+    //     트랙 순서를 바꾸면 인쇄물이 다른 룸을 가리키므로, 행사 전 순서를 고정할 것.
+    const buildRoomUrl = (project, roomNo) => {
+      const seg = project && project.code ? project.code : (project && project.id);
+      return `${window.location.origin}${location.pathname}#/r/${seg}/${roomNo}`;
+    };
+    // 룸별 운영자(스피커) 화면 URL — 콘솔 토큰 게이트 안에서 열리므로 URL 에 토큰이 없다.
+    const buildRoomAdminUrl = (project, roomNo) => {
+      const seg = project && project.code ? project.code : (project && project.id);
+      return `${window.location.origin}${location.pathname}#/ra/${seg}/${roomNo}`;
+    };
+    // 트랙 배열 → QR 발급용 룸 목록 [{ no, name }]. sort_order 가 비어 있으면 정렬 순서로 채운다.
+    const roomListFromTracks = (tracks) =>
+      (tracks || []).map((t, i) => ({ no: t.sort_order || (i + 1), name: t.name }));
 
     // 'YYYY-MM-DD' → '8월 20일 (수)' 형태 라벨. 멀티데이 날짜 헤더용. 빈 값이면 '날짜 미지정'.
     const WEEKDAY_KR = ['일', '월', '화', '수', '목', '금', '토'];
@@ -1435,6 +1450,129 @@
               PNG 다운로드
             </Button>
           </div>
+        </Modal>
+      );
+    };
+
+    // ========================================
+    // 🏛 룸 QR 모달 — 룸(트랙)마다 QR 한 장. 현장 룸 입구에 붙일 인쇄물용.
+    // -----------------------------------------------------------------------
+    //  ⚠️ 룸 QR 주소는 **고정**이다. 세션이 바뀔 때마다 새로 뽑지 않는다 —
+    //     QR 이 가리키는 룸 페이지가 시각에 맞춰 현재 세션으로 알아서 전환된다.
+    //  각 QR 아래에 룸 이름을 얹어 PNG 로 저장하므로, 인쇄물에서 어느 룸인지 바로 보인다.
+    //  props: { isOpen, onClose, project, rooms: [{no, name}] }
+    // ========================================
+    const RoomQrModal = ({ isOpen, onClose, project, rooms }) => {
+      const copy = useClipboard();
+      const toast = useToast();
+      const canvasRefs = useRef({});
+      const [error, setError] = useState('');
+
+      useEffect(() => {
+        if (!isOpen || !rooms || !rooms.length) return;
+        setError('');
+        const id = requestAnimationFrame(() => {
+          if (!window.QRCode || typeof window.QRCode.toCanvas !== 'function') {
+            setError('QR 라이브러리를 불러오지 못했습니다.');
+            return;
+          }
+          rooms.forEach((r) => {
+            const canvas = canvasRefs.current[r.no];
+            if (!canvas) return;
+            window.QRCode.toCanvas(canvas, buildRoomUrl(project, r.no), {
+              width: 200, margin: 2,
+              color: { dark: '#0e1013', light: '#ffffff' },   // 스캔 가독성 — 다크모드 무관
+              errorCorrectionLevel: 'M',
+            }, (err) => { if (err) setError('QR 생성에 실패했습니다.'); });
+          });
+        });
+        return () => cancelAnimationFrame(id);
+      }, [isOpen, rooms, project]);
+
+      // QR 캔버스 + 룸 이름을 한 장의 PNG 로 합성해 저장(인쇄용).
+      const download = (room) => {
+        const src = canvasRefs.current[room.no];
+        if (!src) return;
+        try {
+          const pad = 24, labelH = 56;
+          const out = document.createElement('canvas');
+          out.width = src.width + pad * 2;
+          out.height = src.height + pad + labelH;
+          const ctx = out.getContext('2d');
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, out.width, out.height);
+          ctx.drawImage(src, pad, pad);
+          ctx.fillStyle = '#0e1013';
+          ctx.textAlign = 'center';
+          ctx.font = 'bold 20px Pretendard, -apple-system, sans-serif';
+          ctx.fillText(room.name, out.width / 2, src.height + pad + 26);
+          ctx.fillStyle = '#6b7280';
+          ctx.font = '13px Pretendard, -apple-system, sans-serif';
+          ctx.fillText('QR 을 스캔해 질문을 남겨주세요', out.width / 2, src.height + pad + 46);
+          const a = document.createElement('a');
+          a.href = out.toDataURL('image/png');
+          a.download = `QR_${room.name.replace(/[\\/:*?"<>|]/g, '_')}.png`;
+          document.body.appendChild(a); a.click(); document.body.removeChild(a);
+          toast.show(`${room.name} QR 을 저장했습니다`, 'success');
+        } catch (e) {
+          toast.show('이미지 저장에 실패했습니다', 'error');
+        }
+      };
+
+      const downloadAll = () => (rooms || []).forEach((r, i) => setTimeout(() => download(r), i * 300));
+
+      return (
+        <Modal isOpen={isOpen} onClose={onClose} title="룸 QR" size="xl">
+          {!rooms || !rooms.length ? (
+            <EmptyState title="트랙(룸)이 없습니다"
+              desc="트랙을 먼저 추가하면 룸마다 QR 이 만들어집니다." />
+          ) : (
+            <div>
+              <div className="text-sm text-ink-600 dark:text-ink-300 bg-ink-50 dark:bg-ink-950 border border-ink-200 dark:border-ink-800 rounded-md px-3 py-2.5 mb-4">
+                룸마다 <span className="font-semibold">QR 한 장을 행사 내내 그대로</span> 붙여두면 됩니다.
+                세션이 바뀔 때 새로 뽑을 필요가 없습니다 — 스캔하면 그 룸의 <span className="font-semibold">현재 진행 중인 세션</span>으로 연결되고,
+                세션이 끝나면 자동으로 다음 세션으로 넘어갑니다.
+                <div className="mt-1.5 text-amber-700 dark:text-amber-300">
+                  ⚠️ 룸 번호는 트랙 순서 기준입니다. <span className="font-semibold">QR 을 인쇄한 뒤에는 트랙 순서를 바꾸지 마세요.</span>
+                </div>
+              </div>
+
+              {error && <p className="text-sm text-red-500 mb-3">{error}</p>}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {rooms.map((r) => {
+                  const url = buildRoomUrl(project, r.no);
+                  return (
+                    <div key={r.no} className="border border-ink-200 dark:border-ink-800 rounded-lg p-4 flex flex-col items-center">
+                      <div className="flex items-center gap-2 self-start mb-3">
+                        <span className="w-1.5 h-4 rounded-full bg-accent-500 dark:bg-accent-400" />
+                        <h4 className="text-sm font-bold text-ink-900 dark:text-ink-50 tracking-tightish">{r.name}</h4>
+                        <span className="text-xs text-ink-400 tabular-nums">룸 {r.no}</span>
+                      </div>
+                      <div className="rounded-lg border border-ink-200 dark:border-ink-700 bg-white p-2.5 shadow-sm">
+                        <canvas ref={(el) => { canvasRefs.current[r.no] = el; }} width={200} height={200} className="block" />
+                      </div>
+                      <div className="w-full mt-3 text-[11px] font-mono text-ink-500 dark:text-ink-400 break-all text-center">{url}</div>
+                      <div className="w-full mt-3 grid grid-cols-2 gap-2">
+                        <Button variant="subtle" size="sm" onClick={() => copy(url, `${r.name} URL 복사됨`)}>URL 복사</Button>
+                        <Button variant="secondary" size="sm" onClick={() => download(r)}>PNG</Button>
+                      </div>
+                      <button type="button"
+                        onClick={() => window.open(buildRoomAdminUrl(project, r.no), '_blank', 'noopener,noreferrer')}
+                        className="mt-2 text-xs text-ink-500 hover:text-accent-600 dark:text-ink-400 dark:hover:text-accent-400 underline underline-offset-2">
+                        이 룸의 운영자 화면 열기
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <Button variant="secondary" className="w-full mt-4" onClick={downloadAll}>
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" /></svg>
+                전체 PNG 다운로드 ({rooms.length}장)
+              </Button>
+            </div>
+          )}
         </Modal>
       );
     };
@@ -1937,6 +2075,7 @@
       const [editOpen, setEditOpen] = useState(false);
       const [deleteOpen, setDeleteOpen] = useState(false);
       const [qrOpen, setQrOpen] = useState(false);              // 행사 QR 모달
+      const [roomQrOpen, setRoomQrOpen] = useState(false);      // 룸 QR 모달(트랙별 QR 발급)
       const [trackModalOpen, setTrackModalOpen] = useState(false); // 트랙 추가 모달
       const [uploadOpen, setUploadOpen] = useState(false);      // 세션 일괄 업로드 모달
       const [sheetOpen, setSheetOpen] = useState(false);        // 외부 시트 연동 모달
@@ -2262,6 +2401,13 @@
                 <Button variant="secondary" onClick={() => setQrOpen(true)}>
                   <QrIcon className="w-4 h-4" /> 행사 QR
                 </Button>
+                {/* 룸 QR — 트랙이 있을 때만. 룸마다 고정 QR 1장(세션은 시각에 맞춰 자동 전환) */}
+                {tracks.length > 0 && (
+                  <Button variant="secondary" onClick={() => setRoomQrOpen(true)}>
+                    <QrIcon className="w-4 h-4" /> 룸 QR
+                    <span className="text-xs tabular-nums text-ink-400">{tracks.length}</span>
+                  </Button>
+                )}
                 <ExcelButton label="전체 Q&A" kind="project" id={params.projectId} />
                 <Button variant="secondary" onClick={() => setSheetOpen(true)}>
                   {autoSyncing ? <Spinner className="w-4 h-4" /> : <SheetIcon className="w-4 h-4" />}
@@ -2402,6 +2548,8 @@
               </>
             )}
           </div>
+          <RoomQrModal isOpen={roomQrOpen} onClose={() => setRoomQrOpen(false)}
+            project={project} rooms={roomListFromTracks(tracks)} />
           <SessionFormModal isOpen={modalOpen} onClose={() => setModalOpen(false)} onSubmit={handleCreated} tracks={tracks} />
           <SessionFormModal mode="edit" session={editSession} isOpen={!!editSession}
             onClose={() => setEditSession(null)} onSubmit={handleSessionEdited} tracks={tracks} />
@@ -3234,7 +3382,8 @@
     // 📄 Page: 사용자 페이지  #/session/:sessionId  (모바일 우선)
     // ========================================
     //  room prop: 룸 QR(#/r/:projectCode/:roomNo)로 들어온 경우에만 채워진다.
-    //   { name, no, mode: 'live'|'recent', nextAt, nextTitle } — 헤더 배지/안내 바 표시용.
+    //   { name, no, mode: 'live'|'recent', nextAt, nextTitle, rooms[], projectSeg } —
+    //   헤더 배지/안내 바 + '다른 룸 보기' 이동에 쓴다.
     //   세션 전환 자체는 상위 RoomPage 가 params 를 갈아끼우는 방식으로 처리한다.
     const UserSessionPage = ({ params, room }) => {
       const { navigate, query } = useRouter();
@@ -3354,6 +3503,15 @@
       };
       const canGoToEvent = !!(projectCode || projectId);
 
+      // 🏛 다른 룸 보기 — 룸 QR 로 들어온 경우에만. 지금 룸을 뺀 나머지 룸 목록.
+      //  이동해도 룸 페이지라서, 그 룸의 '현재 세션'으로 바로 연결된다.
+      const [roomPickerOpen, setRoomPickerOpen] = useState(false);
+      const otherRooms = (room && room.rooms ? room.rooms : []).filter((r) => r.no !== room.no);
+      const goToRoom = (no) => {
+        setRoomPickerOpen(false);
+        navigate(`/r/${room.projectSeg}/${no}`);
+      };
+
       const handleLike = async (qid) => {
         if (votedIds.includes(qid)) return; // 중복 방지
         // Optimistic UI
@@ -3466,6 +3624,14 @@
                 </div>
               </div>
               <div className="flex items-center gap-2 shrink-0">
+                {/* 🏛 다른 룸 보기 — 룸 QR 로 들어왔고 다른 룸이 있을 때만. 모바일에서도 항상 노출. */}
+                {otherRooms.length > 0 && (
+                  <button onClick={() => setRoomPickerOpen(true)}
+                    className="inline-flex items-center gap-1.5 border border-ink-700 text-ink-300 hover:bg-ink-800 hover:text-white active:scale-[0.99] transition text-sm font-medium px-3 py-2 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/50">
+                    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 21h18M5 21V7l7-4 7 4v14M9 9h1M9 13h1M14 9h1M14 13h1M10 21v-4h4v4" /></svg>
+                    <span className="hidden sm:inline">다른 룸</span>
+                  </button>
+                )}
                 {/* 데스크탑: 전체 세션 보기 secondary 버튼(아이콘 외에 라벨도 노출) */}
                 {canGoToEvent && (
                   <button onClick={goToEvent}
@@ -3533,6 +3699,34 @@
           </div>
 
           <QuestionFormModal isOpen={modalOpen} onClose={() => setModalOpen(false)} onSubmit={handleCreated} />
+
+          {/* 🏛 룸 선택 — 고르면 그 룸의 '지금 세션'으로 바로 간다(세션 목록을 거치지 않음) */}
+          {room && (
+            <Modal isOpen={roomPickerOpen} onClose={() => setRoomPickerOpen(false)} title="다른 룸 보기" size="sm">
+              <p className="text-sm text-ink-500 dark:text-ink-400 mb-3">
+                고른 룸에서 <span className="font-semibold">지금 진행 중인 세션</span>으로 이동합니다.
+              </p>
+              <div className="space-y-2">
+                {(room.rooms || []).map((r) => {
+                  const current = r.no === room.no;
+                  return (
+                    <button key={r.no} type="button" disabled={current}
+                      onClick={() => goToRoom(r.no)}
+                      className={`w-full text-left border rounded-lg px-4 py-3 flex items-center justify-between gap-3 transition ${
+                        current
+                          ? 'border-accent-400 bg-accent-50 dark:border-accent-600 dark:bg-accent-950/30 cursor-default'
+                          : 'border-ink-200 hover:border-accent-400 dark:border-ink-700 dark:hover:border-accent-500 active:scale-[0.99]'
+                      }`}>
+                      <span className="font-medium text-ink-900 dark:text-ink-50">{r.name}</span>
+                      {current
+                        ? <span className="text-xs font-semibold text-accent-700 dark:text-accent-300 shrink-0">현재 룸</span>
+                        : <svg className="w-4 h-4 text-ink-300 dark:text-ink-600 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18l6-6-6-6" /></svg>}
+                    </button>
+                  );
+                })}
+              </div>
+            </Modal>
+          )}
         </div>
       );
     };
@@ -3583,14 +3777,13 @@
       return { mode: 'ended', session: null, next: null, nextBoundary: null };
     };
 
-    const RoomPage = ({ params }) => {
-      const { navigate } = useRouter();
+    // 룸 타임테이블 로드 + 시각 기반 자동 전환을 한 곳에.
+    //  참가자 화면(RoomPage)과 운영자 화면(RoomAdminPage)이 **같은 판정**을 쓰도록 훅으로 뺐다.
+    //  → 두 화면이 서로 다른 세션을 보여주는 사고를 구조적으로 막는다.
+    const useRoomAutoSwitch = (projectIdOrCode, roomNo) => {
       const [data, setData] = useState(undefined);   // undefined=loading, null=오류/없음
       const [error, setError] = useState('');
       const [now, setNow] = useState(() => Date.now());
-
-      const projectIdOrCode = params.projectCode || '';
-      const roomNo = params.roomNo || '';
 
       const load = useCallback(async () => {
         setData(undefined);
@@ -3629,6 +3822,15 @@
         };
       }, [picked]);
 
+      return { data, error, picked, now, load };
+    };
+
+    const RoomPage = ({ params }) => {
+      const { navigate } = useRouter();
+      const projectIdOrCode = params.projectCode || '';
+      const roomNo = params.roomNo || '';
+      const { data, error, picked, now, load } = useRoomAutoSwitch(projectIdOrCode, roomNo);
+
       if (data === undefined) return <div className="min-h-screen bg-ink-50 dark:bg-ink-950"><Loading /></div>;
 
       if (data === null) {
@@ -3658,6 +3860,9 @@
               name: room.name, no: room.no, mode: picked.mode,
               nextAt: picked.next ? picked.next.starts_at : '',
               nextTitle: picked.next ? picked.next.title : '',
+              // '다른 룸 보기' 이동용 — 룸 목록 + 주소에 쓸 프로젝트 세그먼트
+              rooms: data.rooms || [],
+              projectSeg: project.code || project.id,
             }} />
         );
       }
@@ -3671,8 +3876,64 @@
       );
     };
 
+    // ========================================
+    // 📄 Page: 룸 운영자(스피커) 화면  #/ra/:projectCode/:roomNo
+    // -----------------------------------------------------------------------
+    //  룸에 놓인 진행자/무대 PC 용. 참가자 룸 페이지와 **같은 시각 판정**으로
+    //  현재 세션의 Q&A 대시보드를 띄우고, 세션이 끝나면 자동으로 다음 세션으로 넘어간다.
+    //  🔒 인증: 세션마다 admin_token 이 다르므로 룸 단위로는 토큰을 URL 에 실을 수 없다.
+    //     → 콘솔 토큰 게이트로 감싸고(한 번 로그인) 그 토큰을 헤더로 보낸다.
+    //     requireSessionAdmin 이 콘솔 토큰을 무조건 통과시키므로 세션이 바뀌어도 재인증이 없다.
+    //     URL 에 토큰이 남지 않는다는 이점도 있다(어깨너머 노출 방지).
+    // ========================================
+    const RoomAdminPage = ({ params }) => {
+      const { navigate } = useRouter();
+      const projectIdOrCode = params.projectCode || '';
+      const roomNo = params.roomNo || '';
+      const { data, error, picked, now, load } = useRoomAutoSwitch(projectIdOrCode, roomNo);
+      const consoleToken = getConsoleToken();
+
+      if (data === undefined) return <div className="min-h-screen bg-ink-50 dark:bg-ink-950"><Loading /></div>;
+
+      if (data === null) {
+        return (
+          <div className="min-h-screen flex items-center justify-center bg-ink-50 dark:bg-ink-950 px-4">
+            <EmptyState
+              title={error === 'notfound' ? '룸을 찾을 수 없습니다' : '불러오지 못했습니다'}
+              desc={error === 'notfound' ? '주소를 확인해 주세요.' : '잠시 후 다시 시도해 주세요.'}
+              action={error === 'notfound' ? null : <Button onClick={load}>다시 시도</Button>} />
+          </div>
+        );
+      }
+
+      const { project, room } = data;
+
+      if (picked.session) {
+        const s = picked.session;
+        return (
+          <AdminDashboardPage
+            key={s.id}
+            params={s.code ? { code: s.code } : { sessionId: s.id }}
+            tokenOverride={consoleToken}
+            room={{
+              name: room.name, no: room.no, mode: picked.mode,
+              nextAt: picked.next ? picked.next.starts_at : '',
+              nextTitle: picked.next ? picked.next.title : '',
+            }} />
+        );
+      }
+
+      // 진행 중인 세션이 없을 때 — 참가자와 동일한 대기 화면을 운영자에게도 보여준다.
+      return (
+        <RoomWaitingScreen
+          project={project} room={room} mode={picked.mode}
+          next={picked.next} now={now} isAdmin
+          onGoLanding={() => navigate('/admin')} />
+      );
+    };
+
     // 룸 대기 화면 — 세션 시작 전 / 종료 후. 다음 세션과 남은 시간을 보여주고 자동으로 넘어간다.
-    const RoomWaitingScreen = ({ project, room, mode, next, now, onGoLanding }) => {
+    const RoomWaitingScreen = ({ project, room, mode, next, now, onGoLanding, isAdmin }) => {
       const remainMs = next ? new Date(next.starts_at).getTime() - now : 0;
       const totalSec = Math.max(0, Math.floor(remainMs / 1000));
       const hh = Math.floor(totalSec / 3600);
@@ -3746,7 +4007,9 @@
                 </>
               )}
               <div className="mt-8">
-                <Button variant="secondary" onClick={onGoLanding}>전체 세션 보기</Button>
+                <Button variant="secondary" onClick={onGoLanding}>
+                  {isAdmin ? '운영자 콘솔로' : '전체 세션 보기'}
+                </Button>
               </div>
             </div>
           </div>
@@ -3864,7 +4127,11 @@
     // ========================================
     // 📄 Page: 관리자 Q&A 대시보드  #/admin/session/:sessionId
     // ========================================
-    const AdminDashboardPage = ({ params }) => {
+    //  tokenOverride: 룸 운영자 화면(#/ra/…)이 콘솔 토큰을 넘겨준다.
+    //   세션마다 admin_token 이 달라 룸 단위로는 URL 토큰을 쓸 수 없기 때문.
+    //   requireSessionAdmin 이 콘솔 토큰을 통과시키므로 세션이 바뀌어도 재인증이 없다.
+    //  room: 룸 화면으로 열렸을 때만. 헤더 배지 + 자동 전환 안내용.
+    const AdminDashboardPage = ({ params, tokenOverride, room }) => {
       const { query } = useRouter();
       const toast = useToast();
       // 짧은 코드(/a/:code) 또는 긴 UUID(/admin/session/:sessionId) 모두 지원.
@@ -3875,12 +4142,13 @@
       // 주소창에서는 토큰을 숨긴다(아래 effect). 새로고침 시엔 sessionStorage 에서 복원.
       const tokenKey = `qa_admin_token_${codeOrId}`;
       const sessionToken = useMemo(() => {
+        if (tokenOverride) return tokenOverride;   // 룸 운영자 화면 — 콘솔 토큰
         if (query.token) {
           try { sessionStorage.setItem(tokenKey, query.token); } catch (e) {}
           return query.token;
         }
         try { return sessionStorage.getItem(tokenKey) || ''; } catch (e) { return ''; }
-      }, [query.token, codeOrId]);
+      }, [tokenOverride, query.token, codeOrId]);
       const [session, setSession] = useState(undefined);
       const [questions, setQuestions] = useState(null);
       const [filter, setFilter] = useState('전체'); // 전체 | 답변대기 | 답변완료 | 숨김
@@ -4024,10 +4292,14 @@
       return (
         <div className="min-h-screen bg-ink-50 dark:bg-ink-950">
           <AdminHeader
-            eyebrow="관리자 모드"
+            eyebrow={room ? `관리자 모드 · ${room.name}` : '관리자 모드'}
             title={session.name}
-            subtitle={`진행자/운영자용 · ${tokenInfo}`}
-            back={`/admin/project/${session.project_id}`}
+            subtitle={room
+              ? (room.mode === 'recent'
+                  ? `이 세션은 종료되었습니다${room.nextAt ? ` · 다음 세션 ${fmtTime(room.nextAt)} 시작 시 자동 전환` : ''}`
+                  : `진행 중 · 세션 종료 시 다음 세션으로 자동 전환`)
+              : `진행자/운영자용 · ${tokenInfo}`}
+            back={room ? '/admin' : `/admin/project/${session.project_id}`}
             right={<ExcelButton label="세션 Q&A" kind="session" id={codeOrId} token={sessionToken} />}
           />
 
@@ -4219,6 +4491,10 @@
     const GatedProjectDetail = (props) => (
       <ConsoleTokenGate><ProjectDetailPage {...props} /></ConsoleTokenGate>
     );
+    // 룸 운영자 화면도 콘솔 토큰 게이트 안에서만 — URL 에 토큰을 싣지 않기 위함.
+    const GatedRoomAdmin = (props) => (
+      <ConsoleTokenGate><RoomAdminPage {...props} /></ConsoleTokenGate>
+    );
 
     const routes = [
       { path: '/admin', component: GatedAdminHome },
@@ -4236,6 +4512,9 @@
       //    세션이 끝나면 자동으로 다음 세션으로 넘어간다(오퍼레이터 개입 없음).
       //    roomNo 는 1-based(tracks.sort_order). 예) #/r/feb8a3/1
       { path: '/r/:projectCode/:roomNo', component: RoomPage },
+      // 🏛 룸 운영자(스피커) 화면 — 룸에 놓인 진행자/무대 PC 용. 콘솔 토큰 게이트로 보호.
+      //    참가자 룸 페이지와 같은 판정으로 현재 세션 대시보드를 띄우고 자동 전환한다.
+      { path: '/ra/:projectCode/:roomNo', component: GatedRoomAdmin },
     ];
 
     const App = () => (
