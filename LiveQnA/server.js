@@ -370,12 +370,17 @@ const isSchemaMissing = (err) =>
 
 // 특정 프로젝트의 트랙 목록(sort_order, created_at 순). 스키마 미적용이면 [] 반환.
 async function fetchTracksForProject(projectId) {
-  const { data, error } = await supabase
+  // code 는 add_track_codes.sql 적용 시에만 존재 → 없으면(42703) 컬럼을 빼고 재시도.
+  const sel = (cols) => supabase
     .from('tracks')
-    .select('id, project_id, name, sort_order, created_at')
+    .select(cols)
     .eq('project_id', projectId)
     .order('sort_order', { ascending: true })
     .order('created_at', { ascending: true });
+  let { data, error } = await sel('id, project_id, name, sort_order, code, created_at');
+  if (error && isSchemaMissing(error)) {
+    ({ data, error } = await sel('id, project_id, name, sort_order, created_at'));
+  }
   if (error) {
     if (isSchemaMissing(error)) return [];
     throw error;
@@ -584,6 +589,7 @@ const mapTrackRow = (row) => row ? ({
   project_id: row.project_id,
   name: row.name,
   sort_order: row.sort_order,
+  code: row.code || '',        // 룸 QR 주소용 고정 코드 (add_track_codes.sql 미적용이면 빈 값)
   created_at: row.created_at,
 }) : null;
 
@@ -1963,8 +1969,10 @@ app.get('/api/public/projects/:projectId/landing', wrap(async (req, res) => {
 //  자동으로 넘어간다(운영자가 공개/비공개를 손으로 토글할 필요 없음).
 //  → 어느 세션이 '지금'인지는 클라이언트가 시계로 판단하므로, 여기서는 그 룸의
 //    공개 세션 타임테이블을 한 번에 내려준다(재조회 없이 경계 시각에 자체 전환).
-//  roomNo 는 1-based. tracks.sort_order 우선 매칭, 없으면 정렬 순서상 n 번째.
-//   → 트랙에 short code 컬럼이 없어도 QR 주소를 만들 수 있게 한 선택(마이그레이션 불필요).
+//  :roomNo 는 **트랙 코드(권장)** 또는 1-based 룸 번호(하위호환) 둘 다 받는다.
+//   - 코드: tracks.code (add_track_codes.sql). 순서를 바꿔도 QR 이 안 깨진다 → 인쇄물용.
+//   - 숫자: sort_order 매칭 후 정렬 n 번째 폴백. 이미 뿌려진 주소를 살리기 위해 유지하지만,
+//           관리자가 트랙 순서를 바꾸면 다른 룸을 가리키게 되는 약점이 있다.
 //  ⚠️ 공개 안전 필드만. admin_token / source_key 는 select 에 넣지 않는다.
 app.get('/api/public/rooms/:projectIdOrCode/:roomNo', wrap(async (req, res) => {
   const project = await resolveProject(req.params.projectIdOrCode, 'id, title, code');
@@ -1975,11 +1983,16 @@ app.get('/api/public/rooms/:projectIdOrCode/:roomNo', wrap(async (req, res) => {
   if (!tracks.length) {
     return res.status(404).json({ success: false, message: '룸 정보가 없습니다.' });
   }
-  const no = parseInt(req.params.roomNo, 10);
-  if (!Number.isFinite(no) || no < 1) {
-    return res.status(404).json({ success: false, message: '룸을 찾을 수 없습니다.' });
+  const seg = (req.params.roomNo || '').toString().trim();
+  // ⚠️ 반드시 **코드 먼저**. 코드는 4자리 hex 라 '4809' 처럼 전부 숫자인 경우가 흔한데
+  //    (16진수에서 약 15% 확률), 숫자 판정을 먼저 하면 그런 코드가 룸 번호로 해석돼
+  //    404 가 난다. 코드는 유니크하고 4자리라 한 자리 룸 번호와 겹치지 않는다.
+  let track = tracks.find((t) => (t.code || '').toLowerCase() === seg.toLowerCase()) || null;
+  if (!track && /^\d+$/.test(seg)) {
+    // 코드에 없는 숫자 = 룸 번호(하위호환). sort_order 우선, 없으면 정렬 순서상 n 번째.
+    const no = parseInt(seg, 10);
+    if (no >= 1) track = tracks.find((t) => t.sort_order === no) || tracks[no - 1] || null;
   }
-  const track = tracks.find((t) => t.sort_order === no) || tracks[no - 1];
   if (!track) {
     return res.status(404).json({ success: false, message: '룸을 찾을 수 없습니다.' });
   }
@@ -2005,9 +2018,13 @@ app.get('/api/public/rooms/:projectIdOrCode/:roomNo', wrap(async (req, res) => {
     success: true,
     data: {
       project: { id: project.id, title: project.title, code: project.code || '' },
-      room: { id: track.id, name: track.name, no: track.sort_order || no },
-      // 같은 행사의 룸 목록 — 룸 QR 인쇄/이동 UI 가 쓰도록 번호와 이름만.
-      rooms: tracks.map((t, i) => ({ no: t.sort_order || (i + 1), name: t.name })),
+      room: {
+        id: track.id, name: track.name,
+        no: track.sort_order || (tracks.indexOf(track) + 1),
+        code: track.code || '',      // 있으면 프론트가 이 값으로 QR/이동 주소를 만든다
+      },
+      // 같은 행사의 룸 목록 — 룸 QR 인쇄/이동 UI 가 쓰도록 공개 안전 필드만.
+      rooms: tracks.map((t, i) => ({ no: t.sort_order || (i + 1), name: t.name, code: t.code || '' })),
       sessions: (sessions || []).map(mapPublicSessionRow),
     },
   });

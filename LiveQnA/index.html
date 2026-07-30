@@ -1249,21 +1249,24 @@
       const seg = project && project.code ? `/e/${project.code}` : `/event/${project && project.id}`;
       return `${window.location.origin}${location.pathname}#${seg}`;
     };
-    // 룸(트랙) QR 이 가리키는 참가자 URL. 룸 번호는 tracks.sort_order(1-based).
-    //  ⚠️ 이 주소는 **고정**이다 — 인쇄해서 룸 입구에 붙여두면 그 안의 세션이 시각에 맞춰 바뀐다.
-    //     트랙 순서를 바꾸면 인쇄물이 다른 룸을 가리키므로, 행사 전 순서를 고정할 것.
-    const buildRoomUrl = (project, roomNo) => {
-      const seg = project && project.code ? project.code : (project && project.id);
-      return `${window.location.origin}${location.pathname}#/r/${seg}/${roomNo}`;
+    // 룸(트랙) 주소의 마지막 세그먼트. **코드가 있으면 코드**, 없으면 룸 번호로 폴백.
+    //  ⚠️ 번호(sort_order)는 관리자가 트랙 순서를 바꾸면 다른 룸을 가리키게 된다.
+    //     코드(add_track_codes.sql)는 트랙 자체에 붙어 순서와 무관하다 → 인쇄물에는 코드를 쓴다.
+    const roomSeg = (room) => (room && room.code) ? room.code : (room && room.no);
+    // 룸 QR 이 가리키는 참가자 URL.
+    //  이 주소는 **고정**이다 — 인쇄해 룸 입구에 붙여두면 안의 세션이 시각에 맞춰 바뀐다.
+    const buildRoomUrl = (project, room) => {
+      const p = project && project.code ? project.code : (project && project.id);
+      return `${window.location.origin}${location.pathname}#/r/${p}/${roomSeg(room)}`;
     };
     // 룸별 운영자(스피커) 화면 URL — 콘솔 토큰 게이트 안에서 열리므로 URL 에 토큰이 없다.
-    const buildRoomAdminUrl = (project, roomNo) => {
-      const seg = project && project.code ? project.code : (project && project.id);
-      return `${window.location.origin}${location.pathname}#/ra/${seg}/${roomNo}`;
+    const buildRoomAdminUrl = (project, room) => {
+      const p = project && project.code ? project.code : (project && project.id);
+      return `${window.location.origin}${location.pathname}#/ra/${p}/${roomSeg(room)}`;
     };
-    // 트랙 배열 → QR 발급용 룸 목록 [{ no, name }]. sort_order 가 비어 있으면 정렬 순서로 채운다.
+    // 트랙 배열 → QR 발급용 룸 목록. sort_order 가 비어 있으면 정렬 순서로 채운다.
     const roomListFromTracks = (tracks) =>
-      (tracks || []).map((t, i) => ({ no: t.sort_order || (i + 1), name: t.name }));
+      (tracks || []).map((t, i) => ({ no: t.sort_order || (i + 1), name: t.name, code: t.code || '' }));
 
     // 'YYYY-MM-DD' → '8월 20일 (수)' 형태 라벨. 멀티데이 날짜 헤더용. 빈 값이면 '날짜 미지정'.
     const WEEKDAY_KR = ['일', '월', '화', '수', '목', '금', '토'];
@@ -1486,7 +1489,7 @@
           rooms.forEach((r) => {
             const canvas = canvasRefs.current[r.no];
             if (!canvas) return;
-            window.QRCode.toCanvas(canvas, buildRoomUrl(project, r.no), {
+            window.QRCode.toCanvas(canvas, buildRoomUrl(project, r), {
               width: 200, margin: 2,
               color: { dark: '#0e1013', light: '#ffffff' },   // 스캔 가독성 — 다크모드 무관
               errorCorrectionLevel: 'M',
@@ -1548,7 +1551,7 @@
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {rooms.map((r) => {
-                  const url = buildRoomUrl(project, r.no);
+                  const url = buildRoomUrl(project, r);
                   return (
                     <div key={r.no} className="border border-ink-200 dark:border-ink-800 rounded-lg p-4 flex flex-col items-center">
                       <div className="flex items-center gap-2 self-start mb-3">
@@ -1565,7 +1568,7 @@
                         <Button variant="secondary" size="sm" onClick={() => download(r)}>PNG</Button>
                       </div>
                       <button type="button"
-                        onClick={() => window.open(buildRoomAdminUrl(project, r.no), '_blank', 'noopener,noreferrer')}
+                        onClick={() => window.open(buildRoomAdminUrl(project, r), '_blank', 'noopener,noreferrer')}
                         className="mt-2 text-xs text-ink-500 hover:text-accent-600 dark:text-ink-400 dark:hover:text-accent-400 underline underline-offset-2">
                         이 룸의 운영자 화면 열기
                       </button>
@@ -3536,9 +3539,10 @@
       //  이동해도 룸 페이지라서, 그 룸의 '현재 세션'으로 바로 연결된다.
       const [roomPickerOpen, setRoomPickerOpen] = useState(false);
       const otherRooms = (room && room.rooms ? room.rooms : []).filter((r) => r.no !== room.no);
-      const goToRoom = (no) => {
+      // 코드가 있으면 코드로 이동(순서 변경에 영향 없음), 없으면 번호 폴백.
+      const goToRoom = (r) => {
         setRoomPickerOpen(false);
-        navigate(`/r/${room.projectSeg}/${no}`);
+        navigate(`/r/${room.projectSeg}/${r.code || r.no}`);
       };
 
       const handleLike = async (qid) => {
@@ -3740,7 +3744,7 @@
                   const current = r.no === room.no;
                   return (
                     <button key={r.no} type="button" disabled={current}
-                      onClick={() => goToRoom(r.no)}
+                      onClick={() => goToRoom(r)}
                       className={`w-full text-left border rounded-lg px-4 py-3 flex items-center justify-between gap-3 transition ${
                         current
                           ? 'border-accent-400 bg-accent-50 dark:border-accent-600 dark:bg-accent-950/30 cursor-default'

@@ -115,7 +115,8 @@ npm start                      # → http://localhost:8787
 7. `fix_admin_token_exposure.sql` — 🔴 **필수 보안 패치**
 8. `fix_high_findings.sql` — 🟠 **필수 보안 패치**
 9. `fix_question_rate_limit.sql` — 🐞 8번의 도배 제한이 무효였던 버그 수정 (§6 ⑨)
-10. (선택) `supabase_seed.sql` — 데모 데이터
+10. `add_track_codes.sql` — 룸 QR용 `tracks.code` (§6 ①)
+11. (선택) `supabase_seed.sql` — 데모 데이터
 
 **Supabase 신규 프로젝트는 Data API(PostgREST)가 기본 off 입니다.** 켜지 않으면 전부 `503 PGRST002` 가 납니다.
 → 대시보드 → Integrations → Data API → Enable (Exposed schemas에 `public` 포함)
@@ -205,10 +206,14 @@ npm start                      # → http://localhost:8787
 
 작업하다 반드시 마주치는 것들입니다. 순서는 위험도 순.
 
-### ① 룸 QR 번호 = `tracks.sort_order`
+### ① 룸 주소는 **코드 우선**, 숫자는 하위호환
 
-`#/r/feb8a3/1` 의 `1` 은 트랙의 `sort_order` 입니다. 트랙에 고정 code 컬럼이 없어서 마이그레이션 없이 가려고 택한 방식입니다.
-**→ 관리자에서 트랙 순서를 바꾸면 이미 인쇄한 QR이 다른 룸을 가리킵니다.** 행사 전 순서 고정이 필수이고, 근본 해결은 `tracks.code` 추가입니다.
+`#/r/<행사코드>/<룸>` 의 마지막 세그먼트는 두 가지를 받습니다.
+
+- **`tracks.code`(4자리, 권장)** — 트랙 자체에 붙는 고정값. 순서를 바꿔도 안 깨져서 **인쇄물에 쓰는 주소**입니다. 콘솔의 룸 QR이 이걸 생성합니다.
+- **숫자(`1`, `2`…)** — 예전 주소. `sort_order` 로 해석되므로 **트랙 순서를 바꾸면 다른 룸을 가리킵니다.** 이미 뿌려진 QR을 살리기 위해서만 남겨 뒀습니다.
+
+> ⚠️ 서버 해석 순서는 **반드시 코드 먼저**입니다. 코드는 4자리 hex라 `4809` 처럼 전부 숫자인 경우가 흔한데(약 15%), 숫자 판정을 먼저 하면 그런 코드가 룸 번호로 해석돼 404가 납니다. 실제로 이 순서 때문에 한 번 깨졌습니다.
 
 ### ② Realtime은 DELETE를 전달하지 않는다
 
