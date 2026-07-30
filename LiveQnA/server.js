@@ -714,6 +714,22 @@ app.get('/api/admin/projects/:projectId/sessions', requireConsole, wrap(async (r
 }));
 
 // POST /api/admin/projects/:projectId/sessions — 생성 (admin_token 은 DB default) [콘솔]
+// 세션 날짜의 기준 ISO 를 정한다. parseDuration 은 이 값의 KST 날짜에 시간을 붙인다.
+//  ymd: 폼에서 온 'YYYY-MM-DD'(빈 값 가능) / projectId: 폴백 추론용
+//  반환 null 이면 parseDuration 이 오늘(KST)을 쓴다.
+async function sessionDateBase(ymd, projectId) {
+  const v = (ymd || '').toString().trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return `${v}T00:00:00+09:00`;   // KST 자정 기준
+  if (!projectId) return null;
+  const { data } = await supabase
+    .from('sessions').select('starts_at')
+    .eq('project_id', projectId)
+    .not('starts_at', 'is', null)
+    .order('starts_at', { ascending: true })
+    .limit(1).maybeSingle();
+  return (data && data.starts_at) || null;
+}
+
 app.post('/api/admin/projects/:projectId/sessions', requireConsole, wrap(async (req, res) => {
   const { projectId } = req.params;
   const b = req.body || {};
@@ -725,15 +741,12 @@ app.post('/api/admin/projects/:projectId/sessions', requireConsole, wrap(async (
     .from('projects').select('id').eq('id', projectId).maybeSingle();
   if (!proj) return res.status(404).json({ success: false, message: '프로젝트를 찾을 수 없습니다.' });
 
-  // 생성 폼엔 날짜 입력이 없다. 오늘 날짜를 붙이면 행사와 무관한 날짜 그룹이 생기므로,
-  // 같은 프로젝트에 이미 있는 세션의 가장 이른 날짜를 물려받는다(없으면 오늘).
-  const { data: firstDated } = await supabase
-    .from('sessions').select('starts_at')
-    .eq('project_id', projectId)
-    .not('starts_at', 'is', null)
-    .order('starts_at', { ascending: true })
-    .limit(1).maybeSingle();
-  const { starts_at, ends_at } = parseDuration(b.duration, firstDated && firstDated.starts_at);
+  // 행사 날짜 기준 결정:
+  //  ① 폼에서 session_date('YYYY-MM-DD')를 받았으면 그 날짜를 쓴다.
+  //  ② 없으면 같은 프로젝트의 가장 이른 세션 날짜를 물려받는다.
+  //     (오늘 날짜를 붙이면 행사와 무관한 날짜 그룹이 생겨 랜딩 필터가 오염된다)
+  const baseIso = await sessionDateBase(b.session_date, projectId);
+  const { starts_at, ends_at } = parseDuration(b.duration, baseIso);
   const insert = {
     project_id: projectId,
     title: name,
@@ -1412,11 +1425,18 @@ app.patch('/api/admin/sessions/:id', wrap(async (req, res) => {
     fields.title = name;
   }
   if (b.description !== undefined) fields.description = (b.description || '').trim() || null;
-  if (b.duration !== undefined) {
-    // 행사 날짜는 유지하고 시간만 갈아끼운다(수정한 날짜로 덮이지 않게).
+  if (b.duration !== undefined || b.session_date !== undefined) {
+    // 기준 날짜: 폼에서 session_date 를 받았으면 그 날짜로 옮기고,
+    //  없으면 기존 starts_at 의 날짜를 유지한다(수정한 날짜로 덮이지 않게).
     const { data: cur } = await supabase
-      .from('sessions').select('starts_at').eq('id', req.params.id).maybeSingle();
-    const { starts_at, ends_at } = parseDuration(b.duration, cur && cur.starts_at);
+      .from('sessions').select('starts_at, ends_at').eq('id', req.params.id).maybeSingle();
+    const ymd = (b.session_date || '').toString().trim();
+    const baseIso = /^\d{4}-\d{2}-\d{2}$/.test(ymd)
+      ? `${ymd}T00:00:00+09:00`
+      : (cur && cur.starts_at);
+    // duration 을 안 보냈으면 기존 시간을 그대로 쓴다(날짜만 옮기는 경우).
+    const duration = b.duration !== undefined ? b.duration : buildDuration(cur && cur.starts_at, cur && cur.ends_at);
+    const { starts_at, ends_at } = parseDuration(duration, baseIso);
     fields.starts_at = starts_at;
     fields.ends_at = ends_at;
   }

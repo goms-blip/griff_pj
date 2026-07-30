@@ -11,6 +11,19 @@
 
 ## 2026-07-30
 
+### 45) ⚡ React production 번들 교체 + 세션 폼 '행사 날짜' 입력 추가
+- **지시:** "그 다음 할일 알려주고 실행해줘"
+- **첫 로딩 실측(gzip):** 외부 리소스 984KB + index.html 62KB = **약 1MB**. 구성 — Babel standalone 547KB / react-dom.dev 227KB / Tailwind CDN 120KB / supabase-js 52KB / react.dev 27KB / qrcode 8KB.
+- **① React production 번들로 교체** — `react.development.js`(27KB)+`react-dom.development.js`(227KB) → production(4KB+41KB). **209KB 절감(첫 로딩의 20%)** + 렌더마다 도는 개발용 검증 제거. 브라우저에서 `ReactDebugCurrentFrame` 부재로 production 확인.
+  - Babel standalone(547KB)이 최대 단일 리소스지만, 없애려면 빌드 단계를 도입해야 한다 = "빌드 도구 없는 단일 파일"이라는 프로젝트 전제를 바꾸는 결정이라 손대지 않고 주석으로만 남김.
+- **② 세션 생성/수정 폼에 '행사 날짜' 입력 추가** — 35번에서 남겨둔 근본 해결.
+  - 프론트: `emptySessionForm` 에 `session_date` 추가, 수정 시 서버가 이미 주는 `session_date` 로 프리필(없으면 `toYmdKST(starts_at)` 폴백), `<Input type="date">` 배치, `createSession` 페이로드에 포함.
+  - 서버: `sessionDateBase(ymd, projectId)` 헬퍼 신설 — 날짜를 받으면 `YYYY-MM-DDT00:00:00+09:00` 을 기준으로, 없으면 기존처럼 같은 프로젝트의 가장 이른 세션 날짜를 상속. PATCH 는 `session_date` 만 보내도 동작하도록 조건 확장 + **duration 미전송 시 기존 시간을 `buildDuration` 으로 복원**해 날짜만 옮긴다.
+  - **검증(임시 프로젝트, 검증 후 삭제):** ⓐ 날짜 지정 생성 → 2026-09-15 14:00 KST 정확 ⓑ 날짜 미지정 생성 → 가장 이른 날짜(09-15) 상속 ⓒ `session_date` 만 PATCH → **09-20 으로 이동하고 시간(14:00~14:50)은 유지**. 실제 세션 수정 모달 프리필도 `2026-08-20` / `11:30 ~ 12:20` 정상.
+- **배포:** `dpl_5vcKgadGitDiDshp7VSiyc89LkqZ` READY. 프로덕션에서 production 번들·행사 날짜 필드·룸 자동 전환·`icn1::icn1` 전부 확인, 콘솔 에러 0.
+- **📌 사용자 조치 대기:** `fix_question_rate_limit.sql` 을 클립보드에 넣고 Supabase SQL Editor 를 열어 둠. **실행 전까지 질문 도배 제한은 무효 상태.**
+- **📌 관찰:** 언리얼 페스트 공개 세션이 29 → 33 건으로 늘어남(비공개 12 → 8). 사용자가 콘솔에서 직접 공개 전환한 것으로 보이며, 36번의 "비공개 12건 확인 필요" 항목이 일부 진행된 셈.
+
 ### 44) 🔥 스트레스 테스트 — 리전 오설정 발견(10배 개선) + 질문 도배 제한이 무효였음
 - **지시:** "스트레스 테스트 해줘" (회의 01:44 항목, 행사 전 마지막 숙제)
 - **방법:** 실제 행사 데이터를 건드리지 않도록 **버리는 테스트 프로젝트**(`[부하테스트] 삭제예정`, 트랙 1·공개 세션 3)를 만들어 진행하고 끝나고 통째로 삭제. 동시성 10/25/50/100, 시나리오당 200건.

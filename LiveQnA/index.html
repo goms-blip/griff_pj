@@ -51,8 +51,14 @@
   <link rel="preconnect" href="https://cdn.jsdelivr.net" />
   <link rel="stylesheet" as="style" crossorigin
         href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
-  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <!-- React: 반드시 production 번들. development 번들은 gzip 254KB 로 production(45KB)의
+       5.6 배이고, 렌더마다 개발용 검증까지 돈다. (2026-07-30 첫 로딩 실측에서 교체)
+       디버깅이 필요하면 잠깐 development 로 바꿨다가 되돌릴 것. -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <!-- ⚠️ 첫 로딩에서 가장 큰 단일 리소스(gzip 547KB). 브라우저에서 JSX 를 직접 트랜스파일하기
+       때문에 필요하다. 없애려면 빌드 단계를 도입해야 하는데, 그건 "빌드 도구 없는 단일 파일"
+       이라는 이 프로젝트의 전제를 바꾸는 결정이라 그대로 둔다. -->
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <!-- Supabase JS (UMD): 전역 window.supabase.createClient 제공 -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -685,6 +691,7 @@
           speaker: (payload.speaker || '').trim(),     // 강연자 (구 description 자리)
           track_id: payload.track_id || null,          // 소속 트랙 (없으면 null)
           duration: (payload.duration || '').trim(),
+          session_date: (payload.session_date || '').trim(),  // 'YYYY-MM-DD' (KST). 빈 값이면 서버가 추론
           is_public: !!payload.is_public,
         }});
       },
@@ -3002,7 +3009,21 @@
 
     // 생성/수정 겸용 모달. mode='create' | 'edit', session(수정 시 prefill 대상)
     // ⚠️ admin_token / session_id(URL)은 수정 대상이 아니므로 폼에 포함하지 않음 → URL 유지
-    const emptySessionForm = { name: '', speaker: '', track_id: '', duration: '', is_public: true };
+    // ISO 타임스탬프 → 'YYYY-MM-DD' (KST). 세션 폼의 날짜 입력 프리필용.
+    //  ⚠️ 로컬 타임존이 아니라 항상 서울 기준으로 뽑는다 — 행사 날짜는 KST 로 관리한다.
+    const toYmdKST = (iso) => {
+      if (!iso) return '';
+      const d = new Date(iso);
+      if (isNaN(d)) return '';
+      const p = new Intl.DateTimeFormat('en-CA', {
+        year: 'numeric', month: '2-digit', day: '2-digit', timeZone: 'Asia/Seoul',
+      }).formatToParts(d);
+      const get = (t) => (p.find((x) => x.type === t) || {}).value;
+      const y = get('year'), m = get('month'), da = get('day');
+      return (y && m && da) ? `${y}-${m}-${da}` : '';
+    };
+
+    const emptySessionForm = { name: '', speaker: '', track_id: '', duration: '', session_date: '', is_public: true };
     const SessionFormModal = ({ isOpen, onClose, onSubmit, mode = 'create', session = null, tracks = [] }) => {
       const [form, setForm] = useState(emptySessionForm);
       const [error, setError] = useState('');
@@ -3017,6 +3038,9 @@
             speaker: session.speaker || '',
             track_id: session.track_id || '',
             duration: session.duration || '',
+            // 서버 mapSessionRow 가 session_date('YYYY-MM-DD', KST)를 이미 내려준다.
+            //  혹시 없는 경로(anon 조회 등)로 들어온 객체면 starts_at 에서 직접 뽑는다.
+            session_date: session.session_date || toYmdKST(session.starts_at),
             is_public: !!session.is_public,
           });
         } else {
@@ -3053,6 +3077,11 @@
                 <div className="mt-1" />
               </div>
             )}
+            {/* 행사 날짜 — 랜딩·관리자의 날짜별 그룹핑 기준(session_date)이 이 값에서 나온다.
+                비워 두면: 생성 시 같은 프로젝트의 가장 이른 세션 날짜를 물려받고,
+                          수정 시 기존 날짜를 그대로 둔다(수정한 날로 덮이지 않게). */}
+            <Input type="date" label="행사 날짜"
+              value={form.session_date} onChange={update('session_date')} />
             <Input label="진행 시간" placeholder="예: 10:00 ~ 11:00"
               value={form.duration} onChange={update('duration')} />
             <label className="flex items-center gap-2.5 cursor-pointer select-none py-1">
