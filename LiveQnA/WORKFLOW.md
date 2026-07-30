@@ -5,11 +5,20 @@
 
 - **프로젝트 기준 문서:** `realtime_event_qna_prd_supabase_mvp_v2.md`
 - **산출물:** `index.html` (CDN React + Tailwind, 빌드 도구 없는 단일 파일)
-- **로컬 실행:** `cd /Users/sh_oh/Downloads/QA && npx serve .` → 브라우저에서 `#/admin`
+- **작업 원본:** `~/Downloads/griff_pj/LiveQnA` (`goms-blip/griff_pj` 클론) — 50번 항목 참고
+- **로컬 실행:** `cd ~/Downloads/griff_pj/LiveQnA && npm start` → `http://localhost:8787` (`#/admin`)
+- **배포:** `cd ~/Downloads/griff_pj && vercel --prod --yes`
 
 ---
 
 ## 2026-07-30
+
+### 51) 💄 관리자 헤더가 제목을 세로로 뭉개던 문제 — 제목/버튼 두 줄로 분리
+- **지시:** 프로젝트 상세 헤더 스크린샷과 함께 "화면의 첫줄은 차라리 두줄로 만드는게 나을꺼 같은데?"
+- **증상:** 버튼이 8개까지 늘어난 프로젝트 상세에서 제목 칸이 0 에 가깝게 눌려 eyebrow 가 **'프/로/젝/트' 한 글자씩 세로로** 깨졌다. 액션 묶음에 `sm:shrink-0` 이 걸려 있어 절대 줄지 않고, 남는 폭을 제목이 다 뒤집어쓰는 구조였다.
+- **수정(`AdminHeader`):** 부모를 `flex flex-wrap` 으로 바꾸고 제목 블록에 `flex-1 basis-64`(최소 16rem) 부여, 액션 묶음의 `shrink-0` 제거. → 폭이 모자라면 **버튼 묶음이 통째로 다음 줄로 내려가고**, 여유가 있으면 그대로 한 줄. eyebrow 에도 `truncate` 추가.
+- **검증:** 프로젝트 상세 1440·1000 → 두 줄(제목/버튼)로 정상 분리, 390(모바일) → 버튼이 3줄로 자연스럽게 흐름. 버튼이 적은 **관리자 홈은 한 줄 유지**(회귀 없음). 콘솔 에러 0.
+- **배포:** `dpl_9AxkdgPGL5Qu2PYedytut6nmM4wk` READY.
 
 ### 50) 📁 작업 원본을 griff_pj 클론으로 전환
 - **지시:** "griff_pj 클론을 작업 원본으로 전환해줘"
