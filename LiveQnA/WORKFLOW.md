@@ -9,6 +9,202 @@
 
 ---
 
+## 2026-07-30
+
+### 39) 🔗 세션 카드에 '열기' 버튼 2개(사용자 페이지 / 관리자 페이지)
+- **지시:** "사용자 페이지랑 관리자 페이지 열어주는 버튼을 하나씩 만들어줘."
+- **처리:** `UrlRow` 에 `openUrl` prop 추가 → 있으면 외부링크 아이콘 + '열기' 버튼이 붙고 **새 탭**(`_blank`, `noopener,noreferrer`)으로 연다. 프로젝트 상세의 세션 카드 '사용자 URL'·'관리자 URL' 행에 각각 하나씩.
+  - 기존 '대시보드 열기'/'사용자 화면 미리보기' 버튼은 `navigate()` 라 **같은 탭**에서 콘솔이 사라진다. 행사 중엔 콘솔을 띄워 둔 채 확인해야 해서 새 탭으로 여는 경로를 URL 행 옆에 붙였다(기존 버튼은 그대로 유지).
+  - **표시/복사용 `url` 과 실제로 여는 `openUrl` 을 분리.** 비공개 세션의 사용자 URL 은 참가자에게 줄 주소 그대로 복사되어야 하지만, 운영자가 열 때는 공개 API 가 404 라서 `?pv=<admin_token>` 미리보기가 필요하다.
+- **검증(로컬 → 프로덕션):** 세션 4개 × 2행 = 열기 버튼 8개. 실제 클릭 시 새 탭이 뜨고 —
+  - 비공개 세션 사용자 URL → `#/s/65ede1?pv=…` 로 열려 `비공개 · 관리자 미리보기` 배지와 함께 정상 렌더.
+  - 공개 세션 사용자 URL → `#/s/ef792a` (토큰 없는 깨끗한 참가자 주소).
+  - 관리자 URL → `#/a/<code>?token=…` 로 열리고 `토큰 인증됨`. 주소창의 `?token=` 은 기존 로직대로 즉시 제거됨(노출 방지).
+  - 콘솔 에러 0.
+- **배포:** `dpl_CitJf3atrxxxQwNfKU4wZWWpLpQr` Production READY.
+
+### 38) 🏛 룸(트랙) QR + 시간 기반 세션 자동 전환 — 회의록(`성수동2가 5.md`) 반영
+- **지시:** 회의 녹음 전사본(`/Users/sh_oh/Downloads/성수동2가 5.md`)을 "분석해서 가능한 부분 수정해줘" → 범위 확인 결과 **앱 코드 수정**, 항목은 **룸별 QR + 시간 자동 전환**만.
+- **회의에서 나온 요구(00:00~01:44):** "QR은 4개고 그 안에서 시간에 맞게 자동으로 바뀌어야 돼… 그래야 우리가 아예 신경을 안 써도 돼(= 오퍼레이터 없이)."
+- **구현**
+  - `server.js` — `GET /api/public/rooms/:projectIdOrCode/:roomNo` 신설(무인증 공개). 반환 `{ project, room, rooms[], sessions[] }` = 그 룸의 **공개 세션 타임테이블 전체**. 공개 안전 필드만(`admin_token`·`source_key` 미포함).
+    - **룸 번호는 `tracks.sort_order`(1-based)** — 트랙에 short code 컬럼이 없어서 택한 방식. **DB 마이그레이션 불필요**. sort_order 매칭 실패 시 정렬 순서상 n번째로 폴백.
+  - `index.html` — 라우트 `#/r/:projectCode/:roomNo` + `RoomPage`/`RoomWaitingScreen` 신설, `mockApi.fetchRoom` 추가.
+    - **'지금 어느 세션인지'는 서버 재조회 없이 클라이언트 시계로 판단.** 타임테이블을 한 번만 받고 경계 시각에 자체 전환 → 참가자 수가 늘어도 서버 부하가 늘지 않는다.
+    - `pickRoomSession()` 5가지 상태: `live`(진행 중) / `recent`(끝난 지 30분 이내 — 쉬는 시간에도 방금 세션에 질문 계속 가능) / `waiting`(시작 전, 카운트다운) / `ended`(모두 종료) / `empty`(시간 정보 있는 공개 세션 없음).
+    - 전환 트리거는 **경계 시각 setTimeout + 30초 인터벌 + `visibilitychange`** 3중. 절전/잠자기로 타이머가 밀려도 복귀 시 즉시 재계산된다.
+    - `live`/`recent` 상태는 **기존 `UserSessionPage` 를 그대로 재사용**(`key={session.id}` 로 remount) → 질문·좋아요·Realtime·폴링 전부 동일 동작. 헤더에 룸 이름 배지, `recent` 면 "이 세션은 종료되었습니다 · 다음 세션 HH:MM 시작" 안내 바.
+    - 대기 화면 카운트다운은 12시간을 넘으면 "498시간 47분" 같은 무의미한 숫자가 되므로 **날짜 표기로 전환**("8월 20일 (목) 11:30 에 시작합니다").
+- **검증 (로컬 → 프로덕션, 브라우저 시계를 가짜로 흘려서)**
+  - 5개 상태 전부 정상: live / recent(안내 바) / waiting(카운트다운 40:00) / ended / 먼 미래(날짜 표기).
+  - **조작 없이 자체 전환 2건 확인** — 세션 종료 8초 전 → 12초 대기 → `recent` 로 자동 전환. 세션 시작 8초 전(대기 화면 00:08) → `live` 질문 페이지로 자동 전환.
+  - 룸 1~4 각각 8·6·7·8건 = 29건(랜딩 공개 세션 수와 일치). 룸 0·5·9 → 404, 없는 행사코드 → 404, 트랙 없는 행사(Mendix) → "룸 정보가 없습니다", UUID 주소도 동작.
+  - 룸 모드에서 질문 등록·좋아요 정상(`disabled`/`aria-pressed=true`), 기존 `#/s/`·`#/e/` 라우트 무영향, 콘솔 에러 0.
+  - 테스트 질문 삭제 완료 → questions 0 / votes 0.
+- **배포:** Production READY (`liveqna-app`). 룸 QR 주소:
+  - `https://liveqna-app.vercel.app/#/r/feb8a3/1` Harmony Ballroom 1
+  - `…/2` Harmony Ballroom 2 · `…/3` Harmony Ballroom 3 · `…/4` Atlas
+- **⚠️ 주의:** 룸 번호가 `tracks.sort_order` 라서 **관리자에서 트랙 순서를 바꾸면 인쇄해 둔 QR 이 다른 룸을 가리킨다.** 행사 전 순서를 고정할 것. (트랙에 고정 code 컬럼을 추가하면 근본 해결)
+- **이번 범위에서 제외(회의엔 있었음):** 스피커/무대용 페이지 4개 자동 전환, 사용자 화면의 "다른 룸 보기" 버튼, 관리자 룸 QR 일괄 발급 화면, 스트레스 테스트, 핸드오버·개발자 문서.
+
+### 37) 🛠 36번에서 찾은 사용자모드 결함 4건 수정 + 배포
+- **지시:** "진행해줘" (36번 리포트의 1·2·3번 수정)
+- **수정 (전부 `index.html`, 서버·DB 변경 없음)**
+  1. **질문 삭제가 참가자 화면에 반영되지 않던 문제 → 폴링 백업 추가.** `UserSessionPage` 에 18~24초 지터 인터벌로 질문 목록만 재조회하는 effect 신설(`refreshQuestions` 를 Realtime 핸들러와 공용). **보이지 않는 탭에서는 돌지 않고**, 다시 보일 때(`visibilitychange`) 즉시 한 번 당겨온다.
+     - **왜 REPLICA IDENTITY FULL 로 안 갔나:** postgres_changes 의 DELETE 는 old record 에 기본키만 실려와 `session_id=eq.…` 필터에 걸리지 못해 전달 자체가 안 된다. FULL 로 바꾸면 전달은 되지만 **DELETE 에는 RLS 가 적용되지 않아** 숨김 처리했던 질문 본문이 참가자 전원에게 브로드캐스트된다 → 폴링을 택함. (지터는 수백 명이 같은 순간에 몰리는 것 방지)
+  2. **세션↔세션 이동 시 질문 모달이 열린 채 남던 문제.** `useEffect(() => setModalOpen(false), [codeOrId])` 추가. 이 컴포넌트는 해시만 바뀌면 언마운트되지 않아 `modalOpen`·폼 오류가 유지됐다.
+  3. **길이 초과 안내 문구 복구.** 제목/이름은 CHECK 가 아니라 `varchar(n)` 이라 실제 코드가 `22001` 이었다 → `character varying(50|20)` 을 파싱해 필드별 문구로 매핑. 비공개 세션 미리보기에서의 insert 거절(`42501`)도 "비공개 세션에는 질문을 등록할 수 없어요. (운영자 미리보기)" 로 분리. 더불어 **거절 문구를 해당 필드 밑에 붙이도록** 수정(전에는 사유와 무관하게 전부 '내용' 밑).
+  4. **(작업 중 추가 발견) 질문 등록 직후 좋아요를 누르면 표가 안 눌린 것처럼 보이던 경합.** `load()` 가 `setVotedIds(localStorage 값)` 로 **교체**해서, 아직 `recordVote` 전인 낙관적 상태를 덮었다(서버엔 정상 기록돼 카운트만 오르고 버튼은 활성). → 투표 상태는 **누적(merge)** 하도록 변경.
+- **검증 (로컬 8787 → 프로덕션 재확인)**
+  - 삭제: 등록은 Realtime 즉시 반영, 삭제 후 **로컬 13초 · 프로덕션 10초**만에 새로고침 없이 사라짐(0개).
+  - 모달: A→B 세션 이동 시 모달 닫힘(오류 잔상 없음), 되돌아와도 정상.
+  - 문구: 제목 51자 → "제목은 50자까지…"(제목 밑), 이름 21자 → "이름은 20자까지…"(이름 밑), 미리보기 등록 → 비공개 안내.
+  - 경합: 등록 0.9초 뒤 즉시 좋아요 → `disabled` + `aria-pressed=true` 유지. 25초 폴링 지나도 유지.
+  - 회귀: 랜딩 공개 29건·8/20·8/21만(7/30 없음), 콘솔 에러 0.
+- **배포:** `dpl_12awNEZqM989VYiKiSdceuf6xzaP` Production READY (`liveqna-app`). 32번과 동일하게 Root Directory 가 `LiveQnA` 라 스크래치패드에 6파일 스테이징 후 `vercel --prod --cwd`.
+- **정리:** 검증용 질문·좋아요 전량 삭제 → questions 0 / votes 0 / post_throttle 0, sessions 45 · projects 2 그대로.
+- **미커밋:** 사용자가 커밋을 지시하지 않아 로컬 변경(`index.html`)은 커밋하지 않음. 프로덕션에는 이미 반영돼 있으므로 다음 커밋 때 함께 넣어야 한다.
+- **남은 항목(36번의 데이터 이슈, 그대로):** 8/20 16:00 세션 강연자 공란 · "이환(NTE…)" 8/21 16:00 두 트랙 중복 공개 · 비공개 12건 확인.
+
+### 36) 🔍 사용자(참가자) 모드 재점검 — 프로덕션 E2E + 권한 재검증
+- **지시:** "사용자모드쪽은 다시한번 확인해줘" (33~35번 보안/날짜 패치 이후 참가자 경로 회귀 확인)
+- **대상:** `liveqna-app` 프로덕션. 커밋 `31a7a14` 상태 그대로(로컬 미커밋 변경 없음).
+- **✅ 정상 확인**
+  - 랜딩 `#/e/feb8a3`: 공개 세션 29건(8/20 16 · 8/21 13), **7/30 그룹 없음**(35번 수정 유지). 날짜×트랙 칩 조합 필터·카운트 정합, 카드→세션 이동 OK.
+  - 세션 페이지: 코드(`#/s/…`)·UUID(`#/session/…`) 모두 해석. 헤더에 트랙·시간·강연자 표시, 다크모드 정상, 콘솔 에러 0.
+  - 질문 등록: 빈 폼 3필드 개별 오류 표시. 길이 — 내용 501자 `questions_content_len`(400), 제목 51자·이름 21자 `varchar` 22001(400). 정상 등록 201.
+  - 좋아요: 신규 1표 반영(1→2) 후 버튼 `disabled`·`aria-pressed=true`, 새로고침 후에도 유지(localStorage `qa_voted_*`). 재요청 `already_voted`, 3자 키 `invalid_voter_key`.
+  - 권한(anon): `sessions` `select=*`/`admin_token`/`source_key` **전부 401**, 화이트리스트 컬럼만 200. 비공개 세션 anon 조회 **0건**, 비공개 세션 질문 anon insert **401 RLS**, read `[]`. 공개 API 응답에 `admin_token`/`source_key` 미포함.
+  - `projects`/`tracks`/`votes`/`post_throttle` — anon 은 200 이지만 RLS 로 **행 0건**(정보 노출 없음).
+  - anon 이 `questions` UPDATE/DELETE 시도 → PostgREST 204 지만 **실제 행 변화 없음**(RLS 필터). `is_answered:true`·`like_count:9999` 섞은 insert → **401 RLS**(스푸핑 차단).
+  - 비공개 세션: 무토큰/오답 pv → 404 "세션을 찾을 수 없습니다", 정상 `?pv=` → 200 + `비공개 · 관리자 미리보기` 배지.
+  - Realtime: 다른 창에서 **등록(INSERT)** → 새로고침 없이 목록 반영. **숨김(UPDATE)** → 참가자 화면에서 즉시 사라짐. **답변완료(UPDATE)** → 배지 즉시 표시. (34번에 "숨김도 반영 안 됨"으로 적었던 건 이번 재현에서 정상 동작 — UPDATE 는 전달됨)
+- **🐞 발견 1 (미수정) — 질문 삭제는 여전히 Realtime 미반영.** 운영자가 질문을 `DELETE` 하면 이미 열려 있는 참가자 화면엔 그대로 남고 새로고침해야 사라짐(재현 확인). → **라이브 중에는 삭제 대신 '숨김'을 쓰면 즉시 반영된다**(이번에 확인). 근본 대응은 별도 필요(주기 폴링 백업 등).
+- **🐞 발견 2 (미수정) — 세션↔세션 이동 시 '질문하기' 모달이 열린 채 남는다.** `UserSessionPage` 는 해시만 바뀌면 언마운트되지 않아 `modalOpen`/`errors` 가 유지됨 → B 세션에 들어가자마자 빨간 오류가 뜬 모달이 떠 있음(2회 재현). 등록 자체는 새 세션(`resolvedId`)으로 가서 오등록은 아님. 수정안: `useEffect(() => { setModalOpen(false); }, [codeOrId])`.
+- **⚠️ 발견 3 (경미) — 길이 초과 안내 문구 일부가 죽어 있음.** 프론트 `questionInsertMessage` 는 `questions_title_len`/`questions_author_len` 을 기대하지만 DB 는 varchar 라 실제 코드가 `22001` → 매핑 실패 시 일반 실패 토스트. 폼 `maxLength` 로 평소엔 도달 불가. 비공개 미리보기에서 질문 등록 시도 시에도(RLS 401) 일반 토스트가 뜬다.
+- **📋 데이터 이슈(코드 아님, 사용자 확인 필요)**
+  - 8/20 16:00 "혼자 만드는 탑다운 익스트랙션 슈터…" **강연자 여전히 공란** — 35번에서 내가 날린 값, 아직 미복구.
+  - "이환(NTE: Neverness to Everness)…" 세션이 **8/21 16:00 에 Harmony Ballroom 1·2 두 곳에 중복 공개** → 참가자에게 같은 세션이 두 번 보임(임포트 산물로 추정).
+  - 언리얼 프로젝트 41개 중 **12개가 비공개** — 소닉 레이싱/메시 터레인/픽셀 스트리밍 등 실제 세션처럼 보이는 항목 포함. 의도된 비공개인지 확인 필요.
+- **테스트 데이터 정리 완료:** 검증용 질문 3건·좋아요 전량 삭제 → questions 0 / votes 0 / post_throttle 0. 프로덕션 세션 데이터는 **건드리지 않음**(35번 교훈 반영해 실 세션에 PATCH 미실행).
+
+### 35) 🐞 세션 수정 시 행사 날짜가 '수정한 날'로 덮이는 버그 + 7/30 데이터 정리
+- **지시:** "관리자에서 수정을 하면 수정한 날짜로 되는데. 행사날짜는 그대로야.. 7월 30일은 없애야해."
+- **근본원인:** `server.js` `parseDuration()` 이 날짜 없는 `'HH:MM ~ HH:MM'` 을 **항상 오늘(KST)** 날짜에 붙여 저장. PATCH 핸들러가 그 값으로 `starts_at/ends_at` 을 덮어씀. 원래 주석은 *"표시는 buildDuration 으로 HH:MM 만 뽑으므로 날짜 부분은 표기에 영향 없음"* 이었는데, `session_date`(랜딩·관리자 **날짜별 필터/그룹핑**)가 이 날짜를 쓴다 → 수정할 때마다 없던 날짜 그룹이 생김.
+- **코드 수정:**
+  - `parseDuration(duration, baseIso)` — `baseIso`(기존 starts_at)의 **KST 날짜를 유지**하고 시간만 교체. 없으면 오늘.
+  - PATCH: 수정 전 현재 `starts_at` 을 조회해 넘김 → 행사 날짜 보존.
+  - POST(생성): 생성 폼엔 날짜 입력이 없어 오늘이 박히면 또 엉뚱한 그룹이 생기므로, **같은 프로젝트의 가장 이른 세션 날짜를 물려받게** 함(없으면 오늘). ※ 근본 해결은 생성 폼에 날짜 입력 추가 — 사용자 결정 대기.
+- **데이터 복원 (7/30 → 8/20, 9건):** 복원 근거 = `created_at` 순서상 임포트가 트랙별 블록으로 생성했고 **9건 전부 8/20 블록 내부**에 위치(같은 블록의 나머지 11건은 8/20 유지). 시간도 8/20 슬롯 격자(11:30·13:40·14:40·16:00·17:00 KST)와 일치. 8/20 11+9=20건, 8/21 21건 → 41건 정합. 시간은 그대로 두고 날짜만 UPDATE(9/9 성공).
+- **검증:** 배포(`liveqna-dm4mazoel`) 후 실제 PATCH(강연자+duration 동시 전송) → **날짜 2026-08-20 유지**, 시간만 변경 확인. 최종 분포 7/21:4 · 8/20:20 · 8/21:21, **7/30: 0건**.
+- **⚠️ 내 실수 — 검증 중 프로덕션 세션 1건의 `speaker` 값을 소실시킴.** 전체 행을 백업하지 않고 실 세션에 PATCH 를 걸어 `speaker` 를 "날짜검증 테스트"로 덮었다. 시간(07:00~07:50)은 같은 슬롯 형제 세션 패턴으로 복원했고, 공개 페이지에 허위 정보가 노출되지 않도록 `speaker` 는 **null 로 비움**. 원본 강연자명은 사용자 확인 또는 엑셀/시트 재임포트로 복구 필요.
+  - 대상: `610cf210` "혼자 만드는 탑다운 익스트랙션 슈터: 뎁스 맵 시야, Mover, GASP 무기 레이어링 실전기" (8/20 16:00~16:50 KST, 공개 세션)
+  - **교훈:** 프로덕션 행에 파괴적 검증을 할 땐 (a) 전체 행을 먼저 백업하거나 (b) 버리는 테스트 세션을 만들어서 할 것.
+
+### 34) 🟠 HIGH 3건 패치 (좋아요 도배 / 질문 도배·길이 / questions RLS)
+- **지시:** "HIGH 3건도 다 잡아줘"
+- **⚠️ 작업 중 발견한 함정 — RLS 에 `is_public` 검사만 추가하면 28번 기능(비공개 세션 미리보기)이 깨진다.** 미리보기는 세션 메타만 서버(`?pv=`)로 받고 **질문은 anon 으로** 읽고 있었음(index.html 3204행). → 서버 경로를 먼저 신설.
+  - `server.js`: `GET /api/public/sessions/:codeOrId/questions?pv=` 추가(세션 단건과 동일한 canView 게이트, 숨김 질문 제외, 번역 캐시 미포함). 검증 — 무토큰 404 / 오답 pv 404 / 정상 pv 200 / 공개세션 200.
+  - `index.html`: 비공개+pv 일 때만 서버 경로 사용(공개 세션은 anon 경로 유지 → Realtime 보존). 비공개 미리보기는 anon 구독이 RLS 로 막히므로 Realtime 구독 자체를 걸지 않음(deps 는 `session` 객체 대신 불리언 `isPrivatePreview` — 매 load 마다 새 객체라 재구독 churn 방지).
+- **`fix_high_findings.sql` 작성 → 사용자가 SQL Editor 에서 실행 완료.**
+  - **③ questions RLS:** `session_is_public(uuid)` **security definer** 함수로 감싸 read/insert 정책에 세션 공개여부 검사 추가. ← CRITICAL 패치로 anon 의 `sessions` SELECT 를 회수했으므로, 정책 안에서 `exists (select 1 from sessions …)` 를 그냥 쓰면 **permission denied 로 모든 질문 읽기가 막힌다**(정책 서브쿼리는 호출자 권한으로 평가됨).
+  - **② 길이/도배:** 길이 CHECK(제목50·이름20·내용500, 폼 제한과 일치) + IP 지문당 60초 10건 트리거. 카운터는 **별도 테이블 `post_throttle`** — `questions` 에 컬럼을 추가하면 관리자 API 의 `select('*')` 와 Q&A 엑셀에 그대로 섞여 나감.
+  - **① 좋아요:** `voter_key` 형식 검증(8~64자) + 좋아요 대상 검증(숨김/비공개 차단) + IP 지문당 60초 60표 속도 제한. 프론트에 거절 사유(`rate_limited`/`not_likeable`/`invalid_voter_key`)별 안내 + 낙관적 +1 롤백 추가.
+  - **개인정보:** 참가자 IP 는 원문 저장하지 않고 `md5` 지문(fp)만 남김. **NAT 고려** — 행사장 공용 와이파이면 수백 명이 같은 IP 라서 "IP 당 1표"가 아니라 "속도"만 제한.
+- **함께 고친 오안내:** 기존 `isBannedWordError` 가 `check_violation`(23514) 전체를 금지어로 취급 → 길이 CHECK 추가 시 "500자 초과"에도 *"부적절한 표현…"* 으로 오안내. 메시지 기반 판별로 좁히고 사유별 문구 분리(`questionInsertMessage`). 토스트/폼 오류도 하드코딩된 금지어 문구 대신 실제 사유를 표시.
+- **검증 (실 프로덕션):**
+  - 길이: 501자 내용 → **400 `questions_content_len`**, 21자 이름 → 400 varchar(20). 정상 등록 201.
+  - 비공개 격리: anon insert → **401 RLS violation**, anon read → **`[]`**, 미리보기 `?pv=` → **200 정상 표시**(기능 보존).
+  - 좋아요: 고정 키 1표 → `liked:true` / 재요청 → `already_voted` / 3자 키 → `invalid_voter_key` / **매번 새 키로 연타 → 60번째에서 `rate_limited`**.
+  - 브라우저 E2E: 질문 등록 → 목록 즉시 반영, 좋아요 1 반영 후 버튼 `disabled aria-pressed=true`(중복 차단), 콘솔 에러 0. `votes.voter_fp` 해시 저장 확인.
+  - 정리: 테스트 질문·votes·post_throttle 전부 삭제 → questions 0 / votes 0 / post_throttle 0, 세션 45·프로젝트 2 유지.
+- **📌 별건으로 발견(미수정, 기존 동작):** 질문이 **삭제될 때 Realtime 이 참가자 화면에 반영되지 않음**. 열려 있던 페이지에 삭제된 질문이 계속 보이고 새로고침해야 사라짐(Postgres `postgres_changes` 의 DELETE 이벤트는 RLS 평가 한계로 누락됨). 라이브 중 운영자가 질문을 숨김/삭제해도 이미 열어둔 참가자 화면엔 남는다는 뜻 → 별도 처리 필요(예: 주기 폴링 백업 또는 숨김 처리로 대체).
+
+### 33) 🔴 CRITICAL 패치(admin_token 유출) + 운영자 인증코드 재설정
+- **지시:** "CRITICAL 먼저 패치해줘" → 작업 중 "운영자 인증코드가 계속 안먹어. 재설정을 할수 있게 해줘."
+- **재현 재확인:** anon 키로 `sessions?select=id,admin_token&is_public=eq.true` → 공개 세션 3건 토큰 평문 반환(916c59d8/28b488e6/9f040c8b).
+- **⚠️ 감사 권고안(`REVOKE SELECT (admin_token)` 단독)은 효력 없음.** Postgres 는 **테이블 레벨 SELECT 가 남아 있으면 컬럼 레벨 REVOKE 를 무시**한다. → 테이블 SELECT 회수 후 안전 컬럼만 재부여하는 방식으로 정정.
+- **`fix_admin_token_exposure.sql` 신규 작성:** `revoke select on sessions from anon/authenticated` → `grant select (id,project_id,title,description,starts_at,ends_at,is_public,code,speaker,track_id,created_at)` 재부여(`admin_token`·`source_key` 제외) + 노출 토큰 전량 로테이션 UPDATE. 화이트리스트 방식이라 향후 컬럼 추가 시 자동 노출 없음.
+- **코드 패치(index.html):** `SESSION_PUBLIC_COLUMNS`/`QUESTION_PUBLIC_COLUMNS` 상수 도입 → anon 경로 `.select('*')` 3곳(세션 조회·질문 목록·질문 등록 반환) 전부 명시 컬럼으로 교체. 사용자 페이지는 번역 컬럼을 쓰지 않으므로 `translated_*` 제외(노출 축소 + 마이그레이션 미적용 환경 호환).
+- **✅ CRITICAL 종결 — 사용자가 SQL Editor 에서 실행 완료 후 검증:** (DB 접속정보가 없어 DDL 은 직접 실행 못 하고, SQL 을 클립보드에 넣고 SQL Editor 를 열어 전달)
+  - 차단 확인(anon): `select=id,admin_token` → **401 42501 permission denied**, `select=*` 우회 → **401**, `source_key` → **401**.
+  - 정상 경로 유지: 앱 세션 컬럼 200 / 앱 질문 컬럼 200 / 비공개 세션 `[]` 은닉 유지.
+  - 토큰 로테이션 확인: `916c59d8` 184df301…→**73f15482…**(32자) 등 전건 교체. 구 토큰 대시보드 호출 **403**, 신 토큰 **200**.
+  - E2E: 공개 세션 페이지(`#/s/ef792a`) 렌더 정상·**콘솔 에러 0**(경고 2건은 기존 CDN 경고), anon 질문 등록도 축소된 select 로 정상(반환 9컬럼, `admin_token` 미포함) → 테스트 질문 삭제·질문 0건 원상복구.
+- **운영자 인증코드 원인 규명:** `liveqna-app` 의 `ADMIN_CONSOLE_TOKEN` 이 `.env.local` 값과 **다른 값**(15일 전 등록)이어서 아는 코드가 계속 401. 32번의 프로젝트 혼선 후속 피해. → 로컬 값으로 재설정(env rm→add) + 재배포 → **200 정상, 오답 401** 확인.
+  - 재설정 방법(향후): `vercel env rm ADMIN_CONSOLE_TOKEN production --yes` → `printf '%s' '<새코드>' | vercel env add ADMIN_CONSOLE_TOKEN production` → 재배포. 코드는 서버 env 만 보므로 DB 변경 불필요.
+  - ⚠️ 현재 코드는 12자로 짧음. 프로젝트 생성/삭제·PII 엑셀 권한을 가진 단일 비밀이라 강한 랜덤 값 권장(사용자 판단 대기).
+  - ⚠️ env rm 과정에서 `ADMIN_CONSOLE_TOKEN` 의 **Preview 환경 등록이 사라짐**(Production 만 남음). Preview 배포를 쓰려면 재등록 필요.
+- **배포:** `liveqna-pj5onmzsc` Production Ready. 검증 — anon 신규 컬럼 조회 200(사용자 페이지 무영향), 공개 세션 API 200, 콘솔 인증 200/401.
+
+### 32) SQL 적용 확인 + 7/29 작업 커밋 + 프로덕션 배포
+- **지시:** "SQL 2개 실행하고 7/29 작업 커밋해줘" → 이어서 "배포해주고 페이지 열어줘"
+- **SQL 2개 — 실행 불필요(이미 적용됨).** service_role 로 컬럼 조회 검증: `questions.translated_title/lang/at`, `projects.sheet_url/auto_sync/synced_at/last_result`, `sessions.source_key` 모두 200 + 실데이터 반환. 대조군(없는 컬럼)은 400 → 200 이 진짜임을 확인. (DB 접속정보가 없어 psql 직접 실행은 불가했고, 확인 결과 실행 자체가 불필요)
+- **커밋:** `f895c18` — index.html·server.js·vercel.json·add_translation.sql·add_sheet_sync.sql·WORKFLOW.md (1,256줄 추가). 커밋 전 시크릿 스캔 통과(index.html anon 키는 설계상 공개). **push 안 함** — 원격 main 은 다른 앱(LivePoll)이라 그대로 밀면 덮어씀.
+- **🔴 배포 대상이 잘못 링크돼 있었음:** 로컬 `.vercel` 은 `prj_P0qegz…`(구 `event-qna`)를 가리켰으나, 이 프로젝트는 **`livepoll-app` 으로 개명 + 다른 앱(Live Poll) 용으로 재사용**된 상태(Root Directory=`LivePoll`). 여기 배포하면 LivePoll 프로덕션을 덮어썼을 것.
+  - 실제 이 앱의 프로덕션은 **`liveqna-app`** (`https://liveqna-app.vercel.app`, title `실시간 행사 Q&A 솔루션`, `/api/admin` 401). Git 미연결·CLI 배포 전용, Root Directory=`LiveQnA`.
+  - `event-qna.vercel.app` 도메인은 **현재 404** (더 이상 이 앱을 서빙하지 않음).
+  - 조치: `livepoll-app` 에 잘못 넣은 `GEMINI_API_KEY`/`CRON_SECRET` **회수(env rm)** → `vercel link --project liveqna-app` 재링크.
+- **환경변수(liveqna-app, Production):** `GEMINI_API_KEY` 등록. `CRON_SECRET` 은 `.env.local` 에 **빈 값**이어서 `openssl rand -hex 24` 로 생성해 Vercel + `.env.local` 양쪽에 반영. `GEMINI_MODEL` 은 빈 값이라 미등록(서버 기본값 `gemini-3.6-flash` + 폴백으로 동작). Preview 환경 등록은 실패(미반영) — 프로덕션 영향 없음.
+- **⚠️ Hobby 플랜 제약 — Cron 주기 변경:** `*/10 * * * *` 은 "Hobby accounts are limited to daily cron jobs" 로 **배포 거부**됨 → `5 0 * * *`(매일 1회)로 낮춤. 관리자가 프로젝트 화면 진입 시 자동 확인하는 경로가 있어 실사용 동기화는 유지. 10분 주기가 필요하면 Pro 업그레이드 필요.
+- **배포 방법:** 프로젝트 Root Directory 가 `LiveQnA` 인데 로컬은 루트 평면 구조라 `vercel --prod` 가 경로 없음 에러. 프로젝트 설정을 건드리지 않고 스크래치패드에 `deploy/LiveQnA/` 스테이징(앱 6파일만, .env 계열 제외) 후 `vercel --prod --cwd` 로 배포.
+- **배포 결과:** `liveqna-h5m05859t` Production Ready. 검증 — `/` 200, `/api/admin/projects` 무토큰 401, `PUT .../sheet` 401, `POST .../translate` 404(=`질문을 찾을 수 없습니다`, 라우트 존재 확인. 없는 경로는 `존재하지 않는 API 경로입니다`), `GET /api/admin/cron/sheet-sync` 무인증 401 / `Bearer CRON_SECRET` **200** `{projects:0}`(연결된 시트 없음).
+- **미검증:** 실제 Gemini 번역 왕복은 프로덕션 질문이 0건이라 확인 못 함(키 등록·라우트 생존까지만 확인). 7/14 감사의 🔴 CRITICAL(anon 키로 admin_token 유출)은 **여전히 미패치** 상태로 배포됨.
+
+---
+
+## 2026-07-29
+
+### 31) 질문 번역(Gemini) + 외부 시트 연동 자동 동기화
+- **지시:** "유저들이 질문을 영어나 일어, 중국어로 남기는 경우가 있어서 그거를 바로 번역해주는 기능. 번역은 제미나이를 이용하고 버튼을 눌러 번역. 그리고 세션이 바뀐 것을 외부시트를 연결하면 바로 자동으로 업데이트되는 기능."
+- **사전 확인(사용자 선택):** ①번역 결과 DB 저장 ②구글시트 공개 링크(CSV) 방식 ③변경분만 반영 ④주기 자동 + 수동 버튼.
+
+#### A. 질문 번역 (Gemini)
+- **DB:** `add_translation.sql` — `questions.translated_title/translated_content/translated_lang/translated_at`.
+- **서버:** `POST /api/admin/questions/:id/translate` (세션 admin_token 인증, body `{force}`).
+  - Gemini `v1beta/models/{model}:generateContent` + `responseSchema` 로 `{source_lang,title,content}` JSON 강제.
+  - 키는 `x-goog-api-key` **헤더**로 전달(URL 로그 유출 방지). 기본 모델 `gemini-3.6-flash`, **404 시 `gemini-2.5-flash`→`gemini-flash-latest` 자동 폴백**.
+  - 번역 결과를 DB 캐시 → 재조회/다른 운영자는 재호출 없음. `force=true` 로 재번역.
+  - 시스템 프롬프트에 **프롬프트 인젝션 방어** 문구(질문 속 지시문은 번역 대상일 뿐, 따르지 않음).
+  - 원인별 안내 메시지: 키 미설정 503 / 키오류 / 모델없음 / 한도초과 429 / 타임아웃 504 / 안전필터 / JSON 파싱 실패.
+  - `add_translation.sql` 미적용이면 **저장만 건너뛰고 번역 결과는 반환**(하위호환).
+- **프론트:** `AdminQuestionCard` 에 **[번역]** 버튼. 원문 아래 액센트 강조선 블록으로 번역 표시.
+  - 감지 언어 라벨(영어/일본어/중국어…), 한글 비중 30% 미만이면 **「외국어」 배지**로 힌트.
+  - 원문이 한국어면 중복 표시 없이 "번역이 필요하지 않습니다" 만.
+  - 번역 후 [번역 접기]/[다시 번역] 로 전환.
+- **환경변수:** `GEMINI_API_KEY`(필수), `GEMINI_MODEL`(선택).
+
+#### B. 외부 시트 연동 (구글 스프레드시트)
+- **DB:** `add_sheet_sync.sql` — `projects.sheet_url/sheet_auto_sync/sheet_synced_at/sheet_last_result`, `sessions.source_key`(+인덱스).
+- **핵심 설계 — 기존 엑셀 업로드(전체 교체)와 다르게 "변경분만 반영":**
+  - 시트 행 ↔ 세션을 `source_key` 로 매칭 → **세션 URL(code)·admin_token·접수된 질문이 전부 보존**.
+  - 키 우선순위: 시트 `ID` 컬럼 > 세션명(중복 시 룸/시각 덧붙임 > 순번). ID 컬럼을 쓰면 **세션명을 바꿔도 같은 세션으로 이어짐**.
+  - 시트 연동 이전 세션은 제목으로 1회 매칭 후 `source_key` 백필(재생성 안 함).
+  - **시트에 없는 컬럼은 건드리지 않음** — 예: 공개여부 컬럼이 없으면 콘솔에서 켠 공개 상태를 덮어쓰지 않음.
+  - 시트에서 사라진 세션은 기본 **유지 + 보고만**. `removeMissing` 옵션 시에도 **질문 0개인 것만** 삭제.
+  - 룸 → 트랙 자동 생성(기존 트랙은 삭제 안 함).
+- **서버 라우트:** `PUT /api/admin/projects/:id/sheet`(연결/해제·저장 전 실제 읽기 검증), `POST .../sheet/sync`(`dryRun`/`removeMissing`), `GET|POST /api/admin/cron/sheet-sync`(Cron 배치).
+  - 구글 시트 URL(편집/게시 링크) → CSV export URL 변환, RFC4180 파서 자체 구현(의존성 추가 없음).
+  - 비공개 시트는 로그인 HTML 이 200 으로 오므로 **content-type 으로 판별** → "공유 설정을 링크가 있는 모든 사용자·뷰어로" 안내.
+- **자동 실행:** `vercel.json` 에 Cron `*/10 * * * *` + **프로젝트 화면 진입 시** 마지막 동기화가 2분 이상 지났으면 1회 확인(ref 가드로 루프 방지) + 모달의 [지금 동기화].
+- **프론트:** 헤더 **[시트 연동]** 버튼(연결 시 점 표시, 자동 동기화면 액센트색). 모달에서 연결/자동동기화 토글/**변경 미리보기(dry-run)**/지금 동기화/연결 해제 + 추가·수정·변경없음·시트에없음 요약과 상세 목록.
+- **환경변수:** `CRON_SECRET`(Vercel Cron 인증용, Vercel 프로젝트 환경변수에도 동일 등록 필요).
+
+#### C. 공통
+- `wrap()` 에 `publicErr(status,message)` 지원 추가 — 외부 API/시트 실패 사유를 사용자에게 그대로 노출(그 외는 기존대로 500 으로 뭉갬).
+- **검증 (총 112건 통과 + 실 API):**
+  - 시트 파싱 39/39 (URL 변환·CSV 따옴표/줄바꿈/BOM·헤더 오매칭 방지·키 생성·에러 안내)
+  - 동기화 엔진 49/49 (재동기화 시 **세션 id·code 유지** 확인, 변경 필드만 UPDATE, 시트에 없는 컬럼 미변경, orphan 보존, removeMissing 안전장치, dryRun 무변경, source_key 백필)
+  - Gemini 24/24 (페이로드 형식, 키 헤더 전달, 404 폴백, 403 즉시 중단, 에러 분기)
+  - **실제 Gemini 호출**: 영어/일본어/중국어 → 한국어 정상 번역, 한국어는 원문 통과, **프롬프트 인젝션 시도는 지시를 따르지 않고 번역만** 함.
+  - 실서버 엔드포인트 인증(401/403/404) 및 마이그레이션 미적용 시 안내 메시지 확인.
+  - 브라우저(Playwright): 번역 버튼·번역 블록·외국어 배지·시트 모달·에러 표시 정상, 콘솔 에러 없음.
+- **⚠️ 사용 전 필수 준비:**
+  1. Supabase SQL Editor 에서 `add_translation.sql`, `add_sheet_sync.sql` 실행
+  2. `.env.local` + Vercel 환경변수에 `GEMINI_API_KEY`, `CRON_SECRET` 등록
+
+---
+
 ## 2026-07-14
 
 ### 30) 프로덕션 QA 전수 점검 (수정 없음 — 전부 정상)
