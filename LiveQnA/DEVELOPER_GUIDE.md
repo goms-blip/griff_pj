@@ -50,12 +50,17 @@
 
 ## 2. 로컬에서 띄우기
 
+작업 원본은 **`goms-blip/griff_pj` 클론의 `LiveQnA/` 폴더**입니다.
+
 ```bash
-cd <repo>/LiveQnA
+git clone https://github.com/goms-blip/griff_pj.git
+cd griff_pj/LiveQnA
 cp .env.example .env.local     # 값 채우기 (아래 표 참고)
 npm install
 npm start                      # → http://localhost:8787
 ```
+
+`.env.local` 은 `LiveQnA/` 안에 둡니다(서버가 `__dirname` 기준으로 읽습니다). `.vercel/` 은 **리포 루트**에 둡니다(§8 참고). 둘 다 `.gitignore` 대상입니다.
 
 `server.js` 가 API와 `index.html` 을 **같은 오리진**으로 서빙합니다(CORS 없음). API가 아닌 모든 GET은 `index.html` 로 폴백합니다(해시 라우팅).
 
@@ -312,17 +317,18 @@ npm start                      # → http://localhost:8787
 Vercel 프로젝트 **`liveqna-app`** (팀 `384's projects`).
 
 - **Git 미연결입니다.** GitHub에 푸시해도 자동 배포되지 않습니다. CLI로만 배포합니다.
-- 프로젝트의 **Root Directory 가 `LiveQnA`** 인데 작업 폴더는 평면 구조라, `vercel --prod` 를 그냥 쓰면 경로 오류가 납니다.
+- 프로젝트의 **Root Directory 가 `LiveQnA`** 입니다. 그래서 `.vercel/` 은 **리포 루트**에 두고, 배포도 **리포 루트에서** 실행합니다.
 
 ```bash
-# 스테이징 디렉터리에 앱 파일만 복사 후 배포
-mkdir -p /tmp/deploy/LiveQnA
-cp index.html server.js package.json package-lock.json vercel.json .vercelignore /tmp/deploy/LiveQnA/
-cp -R .vercel /tmp/deploy/          # 프로젝트 링크
-cd /tmp/deploy && vercel --prod --yes --cwd .
+cd <griff_pj 클론 루트>     # LiveQnA/ 의 부모
+vercel --prod --yes
 ```
 
-`.env.local` 계열은 절대 복사하지 마세요. 환경변수는 Vercel 프로젝트 설정에 등록합니다.
+`LiveQnA/` 안에서 실행하면 Vercel 이 `LiveQnA/LiveQnA` 를 찾으며 경로 오류가 납니다.
+
+> 예전에는 작업 폴더가 평면 구조(파일이 루트에 흩어져 있음)라 임시 디렉터리에 `LiveQnA/` 를 만들어 스테이징한 뒤 배포했습니다. 리포 구조를 그대로 쓰는 지금은 그 단계가 필요 없습니다.
+
+`.env.local` 은 배포에 포함되지 않습니다(`.vercelignore`). 환경변수는 Vercel 프로젝트 설정에 등록합니다.
 
 ```bash
 # 운영자 토큰 교체

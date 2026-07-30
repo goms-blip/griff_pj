@@ -11,6 +11,20 @@
 
 ## 2026-07-30
 
+### 50) 📁 작업 원본을 griff_pj 클론으로 전환
+- **지시:** "griff_pj 클론을 작업 원본으로 전환해줘"
+- **이전 상태의 문제:** 작업 폴더 `~/Downloads/QA` 의 git origin 이 **`goms-blip/test-01`**(주차별 학습 저장소)이었고 HEAD 기준 1,000여 파일이 삭제 상태로 잡혀 있어, 여기서 커밋하면 그 저장소를 망가뜨린다. 그래서 매번 griff_pj 를 스크래치패드에 클론해 복사→커밋→푸시하는 우회로를 썼다.
+- **처리**
+  - `~/Downloads/griff_pj` 에 **이미 클론이 있었으나 `6c199f0`(LiveQnA 폴더 생기기 전) 로 낡아 있었다** → `git pull` 로 `18e60a9` 까지 동기화. 새로 클론하지 않고 기존 것을 살림(LivePoll 도 같이 들어 있음).
+  - 로컬 전용 파일 이관: `.env.local` → `griff_pj/LiveQnA/`(서버가 `__dirname` 기준으로 읽음), `.vercel/` → **`griff_pj/` 리포 루트**(Root Directory=`LiveQnA` 라 루트에 있어야 함). 둘 다 `.gitignore` 대상이라 `git status` 깨끗함 확인.
+  - `npm install`(147 패키지).
+- **✅ 배포 절차가 단순해졌다.** 예전엔 작업 폴더가 평면 구조라 임시 디렉터리에 `LiveQnA/` 를 만들어 스테이징 후 `--cwd` 로 배포했는데, 이제 리포 구조를 그대로 쓰므로 **리포 루트에서 `vercel --prod --yes` 한 줄**이면 된다.
+- **검증**
+  - 로컬: `npm start` → `/` 200, 무토큰 401, 룸 API 정상, 콘솔 토큰 인증 정상.
+  - 배포(`dpl_FJHzNg5ueeL7rMZ2quFqPmLib94c` READY): `icn1::icn1` 유지, 룸 API 정상, **NTE Q&A 통합 유지**(`merged=true`), react production 번들 확인. LivePoll(200)도 영향 없음.
+- **문서:** 개발자 설명서 §2(로컬 구동)·§8(배포)을 새 방식으로 교체하고, 스테이징 우회로는 "예전 방식"으로 주석 처리.
+- **⚠️ 앞으로 작업 위치:** `~/Downloads/griff_pj/LiveQnA`. 이 WORKFLOW.md 도 그쪽 파일이 원본이다. (`~/Downloads/QA` 는 더 이상 원본이 아님)
+
 ### 49) 🔗 세션 Q&A 통합 기능 (`sessions.qa_parent_id`) — 두 룸 병행 강연의 질문을 하나로
 - **지시:** "세션이 하나로 합치는 경우에 QA를 하나로 합치는 기능을 넣을수 있나? 이환처럼 말야."
 - **설계 판단:** 세션을 여러 트랙에 거는 다대다 구조(`session_tracks`)가 개념상 깔끔하지만, 랜딩 그룹핑·관리자 카드·엑셀·시트 동기화가 전부 `sessions.track_id` 를 전제로 짜여 있어 **행사 3주 전에 손대기엔 파급이 크다.** → **세션 레코드는 룸마다 그대로 두고 '질문을 읽고 쓰는 대상'만 원본으로 돌리는** 최소 변경을 택함.
