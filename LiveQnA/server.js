@@ -2137,7 +2137,15 @@ app.use('/api', (_req, res) => {
 
 // 그 외 모든 비-API GET 경로 → index.html (SPA, hash 라우팅)
 // 실제 파일 경로 매핑이 아니라 항상 index.html 을 내보내므로 민감 파일 노출 없음.
+//  ⚡ CDN 캐시: 이 파일은 246KB 이고 **모든 참가자의 첫 진입마다** 함수를 깨운다.
+//     세션 시작 시각에 QR 스캔이 한꺼번에 몰리는 게 이 앱의 최대 부하 지점이라
+//     (2026-07-30 부하 테스트: 동시 100 에서 p95 1.1s) 엣지가 대신 응답하게 한다.
+//     - max-age=0        : 브라우저는 매번 재검증(배포 직후 구버전 방지)
+//     - s-maxage=300     : 엣지는 5분간 그대로 서빙 → 함수 호출 자체가 사라짐
+//     - stale-while-revalidate : 만료 뒤에도 즉시 응답하고 뒤에서 갱신
+//     Vercel 은 새 배포 때 CDN 캐시를 자동 무효화하므로 배포 직후에도 안전하다.
 app.get('*', (_req, res) => {
+  res.set('Cache-Control', 'public, max-age=0, s-maxage=300, stale-while-revalidate=86400');
   res.sendFile(path.join(__dirname, 'index.html'));
 });
 

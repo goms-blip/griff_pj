@@ -114,7 +114,8 @@ npm start                      # → http://localhost:8787
 6. `add_sheet_sync.sql` — `projects.sheet_*` + `sessions.source_key`
 7. `fix_admin_token_exposure.sql` — 🔴 **필수 보안 패치**
 8. `fix_high_findings.sql` — 🟠 **필수 보안 패치**
-9. (선택) `supabase_seed.sql` — 데모 데이터
+9. `fix_question_rate_limit.sql` — 🐞 8번의 도배 제한이 무효였던 버그 수정 (§6 ⑨)
+10. (선택) `supabase_seed.sql` — 데모 데이터
 
 **Supabase 신규 프로젝트는 Data API(PostgREST)가 기본 off 입니다.** 켜지 않으면 전부 `503 PGRST002` 가 납니다.
 → 대시보드 → Integrations → Data API → Enable (Exposed schemas에 `public` 포함)
@@ -236,7 +237,32 @@ npm start                      # → http://localhost:8787
 
 ### ⑦ 개발용 React 번들이 프로덕션에 나간다
 
-`react.development.js` 를 그대로 씁니다. 부하 테스트나 성능 개선을 한다면 **`react.production.min.js` 로 교체**가 가장 싼 개선입니다.
+`react.development.js` 를 그대로 씁니다. 성능을 더 짜야 한다면 **`react.production.min.js` 로 교체**가 가장 싼 개선입니다.
+
+### ⑧ 함수 리전은 반드시 DB 와 같은 곳에
+
+`vercel.json` 의 `"regions": ["icn1"]` 을 지우지 마세요. 기본값은 `iad1`(미국 동부)인데 Supabase 가 서울이라, **쿼리 한 번마다 태평양을 왕복**합니다. 랜딩처럼 순차 쿼리가 4번 있는 엔드포인트는 그대로 1초가 됩니다.
+
+2026-07-30 부하 테스트 실측(p50, 동시성 10):
+
+| | iad1 (기본) | icn1 (수정 후) |
+|---|---:|---:|
+| index.html | 572ms | **53ms** |
+| 룸 타임테이블 API | 947ms | **92ms** |
+| 행사 랜딩 API | 1111ms | **106ms** |
+| 세션 단건 API | 891ms | **83ms** |
+
+확인 방법: 응답 헤더 `x-vercel-id` 가 `icn1::icn1` 이어야 합니다. `icn1::iad1` 이면 잘못된 상태입니다.
+
+> `vercel.json` 에 `//주석` 같은 임의 키를 넣으면 스키마 검증에서 **배포가 거부**됩니다.
+
+### ⑨ SECURITY DEFINER 안에서 `current_user` 로 호출자를 판별하지 말 것
+
+**definer 함수 안의 `current_user` 는 호출자가 아니라 함수 소유자입니다.** 이것 때문에 질문 도배 제한이 작성 시점부터 무효였고(항상 조기 return), 부하 테스트에서야 발견됐습니다 — anon 으로 20건을 연속 등록해도 전부 통과하고 `post_throttle` 이 계속 비어 있었습니다.
+
+호출자 role 이 필요하면 `current_setting('role', true)` 를 쓰세요. PostgREST 가 요청마다 `SET LOCAL ROLE` 을 걸고, definer 진입은 이 GUC 를 바꾸지 않습니다. (`anon` / `service_role` / SQL Editor 는 `none`)
+
+같은 파일의 `like_question()` 은 이 가드가 없어서 정상 동작했습니다. **비슷한 함수 사이에 동작 차이가 나면 role 판별부터 의심하세요.**
 
 ---
 
