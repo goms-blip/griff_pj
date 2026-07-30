@@ -116,7 +116,8 @@ npm start                      # → http://localhost:8787
 8. `fix_high_findings.sql` — 🟠 **필수 보안 패치**
 9. `fix_question_rate_limit.sql` — 🐞 8번의 도배 제한이 무효였던 버그 수정 (§6 ⑨)
 10. `add_track_codes.sql` — 룸 QR용 `tracks.code` (§6 ①)
-11. (선택) `supabase_seed.sql` — 데모 데이터
+11. `add_session_qa_merge.sql` — 두 룸 병행 시 Q&A 통합용 `sessions.qa_parent_id` (§6 ⑩)
+12. (선택) `supabase_seed.sql` — 데모 데이터
 
 **Supabase 신규 프로젝트는 Data API(PostgREST)가 기본 off 입니다.** 켜지 않으면 전부 `503 PGRST002` 가 납니다.
 → 대시보드 → Integrations → Data API → Enable (Exposed schemas에 `public` 포함)
@@ -268,6 +269,18 @@ npm start                      # → http://localhost:8787
 호출자 role 이 필요하면 `current_setting('role', true)` 를 쓰세요. PostgREST 가 요청마다 `SET LOCAL ROLE` 을 걸고, definer 진입은 이 GUC 를 바꾸지 않습니다. (`anon` / `service_role` / SQL Editor 는 `none`)
 
 같은 파일의 `like_question()` 은 이 가드가 없어서 정상 동작했습니다. **비슷한 함수 사이에 동작 차이가 나면 role 판별부터 의심하세요.**
+
+### ⑩ 세션의 "Q&A 대상"은 자기 id 가 아닐 수 있다
+
+같은 강연을 두 룸에서 병행할 때(예: 8/21 16:00 NTE), 룸마다 세션 레코드가 필요하지만 질문은 하나로 모아야 합니다. `sessions.qa_parent_id` 가 그 연결이고, **질문을 읽고 쓰는 대상은 `qa_parent_id || id`** 입니다.
+
+- 서버 헬퍼: `qaSessionId(session)`. 공개 세션 응답에 `qa_session_id` / `qa_merged` 로 실려 나갑니다.
+- 프론트: `UserSessionPage` 의 `resolvedId` 에 이 값을 넣습니다. **`resolvedId` 하나만 바꾸면** 질문 목록·등록·좋아요·Realtime 구독·폴링이 전부 따라옵니다.
+- 이미 반영된 곳: 참가자 질문 경로, 관리자 질문 목록, 세션 통계, 세션 엑셀 export.
+
+> **질문 데이터를 옮기지 않습니다.** `questions.session_id` 는 그대로 두고 "어디를 보느냐"만 바꾸는 구조라, 통합을 해제하면 각 세션이 자기 질문으로 되돌아갑니다.
+> 서버가 막는 것: 자기 자신 지정 / 다른 행사 세션 / **체인**(원본이 또 미러인 경우 — 해석이 여러 단계가 되고 순환이 생김) / 원본이 비공개인데 미러가 공개인 경우(RLS로 참가자에게 안 보임).
+> **새 세션 경로를 추가할 때 `session.id` 를 그대로 질문 조회에 쓰면 통합이 깨집니다.** 반드시 `qaSessionId()` 를 거치세요.
 
 ---
 

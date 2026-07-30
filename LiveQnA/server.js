@@ -179,6 +179,7 @@ const mapSessionRow = (row) => row ? ({
   session_date: fmtDate(row.starts_at),      // 'YYYY-MM-DD' (KST) — 멀티데이 그룹핑용
   is_public: !!row.is_public,
   admin_token: row.admin_token,
+  qa_parent_id: row.qa_parent_id || null,    // Q&A 를 빌려오는 원본 세션 (통합 시)
   created_at: row.created_at,
 }) : null;
 
@@ -310,6 +311,12 @@ async function generateUniqueCode(table, attempts = 8) {
 //  ⚠️ add_short_codes.sql 미실행 시 code 컬럼이 없을 수 있다(42703):
 //     - uuid 입력은 code 와 무관하므로 select 에서 code 를 빼고 재시도 → 정상 동작(하위호환).
 //     - code 입력은 해석 불가 → null(404).
+// Q&A 를 실제로 읽고 쓸 세션 id. 미러 세션(qa_parent_id 있음)이면 원본을 가리킨다.
+//  같은 강연을 두 룸에서 병행할 때, 룸마다 세션 레코드는 따로 두되 질문/좋아요는
+//  하나로 모으기 위한 것. (add_session_qa_merge.sql)
+//  ⚠️ 한 단계만 해석한다 — 원본이 또 미러인 체인은 PATCH 단계에서 막는다.
+const qaSessionId = (session) => (session && session.qa_parent_id) || (session && session.id) || null;
+
 async function resolveSession(codeOrId, { publicOnly = false } = {}) {
   const v = (codeOrId || '').toString().trim();
   if (!v) return null;
@@ -711,9 +718,10 @@ app.get('/api/admin/projects/:projectId/sessions', requireConsole, wrap(async (r
   // 트랙 이름 매핑(스키마 미적용이면 빈 객체). row.track_id 는 select('*') 결과에 포함될 수 있음.
   const nameMap = await trackNameMap(list.map((s) => s.track_id));
 
+  // Q&A 통합 세션은 원본의 질문 통계를 보여준다(같은 Q&A 를 쓰므로 같은 숫자가 맞다).
   const result = list.map((row) => ({
     ...mapSessionRow({ ...row, track_name: nameMap[row.track_id] || '' }),
-    stats: computeSessionStats(bySession[row.id] || []),
+    stats: computeSessionStats(bySession[row.qa_parent_id || row.id] || []),
   }));
 
   res.json({ success: true, data: result });
@@ -1451,11 +1459,57 @@ app.patch('/api/admin/sessions/:id', wrap(async (req, res) => {
   if (b.track_id !== undefined) fields.track_id = (b.track_id || '').toString().trim() || null;
   if (b.speaker !== undefined) fields.speaker = (b.speaker || '').toString().trim() || null;
 
-  // track_id/speaker 컬럼이 없으면(42703) 해당 키를 빼고 재시도 → 기존 기능 유지.
+  // Q&A 통합 (add_session_qa_merge.sql). 빈 값이면 해제 → 자기 Q&A 로 되돌아간다.
+  if (b.qa_parent_id !== undefined) {
+    const parentId = (b.qa_parent_id || '').toString().trim();
+    if (!parentId) {
+      fields.qa_parent_id = null;
+    } else {
+      const { data: me } = await supabase
+        .from('sessions').select('id, project_id, is_public').eq('id', req.params.id).maybeSingle();
+      const { data: parent } = await supabase
+        .from('sessions').select('id, project_id, is_public, qa_parent_id').eq('id', parentId).maybeSingle();
+      if (!parent) {
+        return res.status(400).json({ success: false, message: '통합할 원본 세션을 찾을 수 없습니다.' });
+      }
+      if (parent.id === (me && me.id)) {
+        return res.status(400).json({ success: false, message: '자기 자신과는 통합할 수 없습니다.' });
+      }
+      if (me && parent.project_id !== me.project_id) {
+        return res.status(400).json({ success: false, message: '같은 행사의 세션끼리만 통합할 수 있습니다.' });
+      }
+      // 체인 금지 — 원본이 또 다른 세션의 미러면 해석이 여러 단계가 된다.
+      if (parent.qa_parent_id) {
+        return res.status(400).json({
+          success: false,
+          message: '이미 다른 세션의 Q&A 를 쓰는 세션은 원본이 될 수 없습니다. 최초 원본을 선택해 주세요.',
+        });
+      }
+      // 원본이 비공개면 참가자 경로가 RLS 로 막혀 질문이 보이지 않는다.
+      if (me && me.is_public && !parent.is_public) {
+        return res.status(400).json({
+          success: false,
+          message: '원본 세션이 비공개라 참가자에게 질문이 보이지 않습니다. 원본을 먼저 공개로 전환해 주세요.',
+        });
+      }
+      // 이 세션을 원본으로 삼는 다른 미러가 있으면, 그것들이 고아가 된다.
+      const { data: myMirrors } = await supabase
+        .from('sessions').select('id').eq('qa_parent_id', req.params.id).limit(1);
+      if (myMirrors && myMirrors.length) {
+        return res.status(400).json({
+          success: false,
+          message: '이 세션의 Q&A 를 쓰는 다른 세션이 있습니다. 그 연결을 먼저 해제해 주세요.',
+        });
+      }
+      fields.qa_parent_id = parentId;
+    }
+  }
+
+  // track_id/speaker/qa_parent_id 컬럼이 없으면(42703) 해당 키를 빼고 재시도 → 기존 기능 유지.
   let { data, error } = await supabase
     .from('sessions').update(fields).eq('id', req.params.id).select().maybeSingle();
   if (error && isSchemaMissing(error)) {
-    const { track_id, speaker, ...fallback } = fields;
+    const { track_id, speaker, qa_parent_id, ...fallback } = fields;
     ({ data, error } = await supabase
       .from('sessions').update(fallback).eq('id', req.params.id).select().maybeSingle());
   }
@@ -1494,10 +1548,12 @@ app.get('/api/admin/sessions/:sessionId/questions', wrap(async (req, res) => {
   const ok = await requireSessionAdmin(req, res, sessionId);
   if (!ok) return;
 
+  // Q&A 통합 세션이면 원본 질문을 본다 → 두 룸의 운영자가 같은 목록을 보고,
+  //  어느 쪽에서 답변완료/숨김을 눌러도 양쪽에 함께 반영된다.
   const { data, error } = await supabase
     .from('questions')
     .select('*')
-    .eq('session_id', sessionId)
+    .eq('session_id', qaSessionId(session))
     .order('like_count', { ascending: false })
     .order('created_at', { ascending: true });
   if (error) throw error;
@@ -1845,6 +1901,10 @@ app.get('/api/public/sessions/:codeOrId', wrap(async (req, res) => {
       is_public: session.is_public === true, // 미리보기 시 프론트가 '비공개' 배지 표시용
       project_id: session.project_id,
       project_code: projectCode,
+      // 질문/좋아요를 읽고 쓸 대상. 보통은 자기 id 지만, 두 룸 병행처럼 Q&A 를
+      // 통합한 세션이면 원본 id 가 온다 → 프론트는 이 값으로 질문을 다룬다.
+      qa_session_id: qaSessionId(session),
+      qa_merged: !!session.qa_parent_id,
     },
   });
 }));
@@ -1868,10 +1928,11 @@ app.get('/api/public/sessions/:codeOrId/questions', wrap(async (req, res) => {
     return res.status(404).json({ success: false, message: '세션을 찾을 수 없습니다.' });
   }
 
+  // Q&A 통합 세션이면 원본의 질문을 읽는다(두 룸이 같은 목록을 본다).
   const { data, error } = await supabase
     .from('questions')
     .select('id, session_id, author, title, content, like_count, is_answered, is_hidden, created_at')
-    .eq('session_id', session.id)
+    .eq('session_id', qaSessionId(session))
     .eq('is_hidden', false)
     .order('like_count', { ascending: false })
     .order('created_at', { ascending: true });
@@ -2107,10 +2168,11 @@ app.get('/api/admin/sessions/:sessionId/questions/export', wrap(async (req, res)
     .from('projects').select('title').eq('id', session.project_id).maybeSingle();
   const projectTitle = project ? project.title : '';
 
+  // Q&A 통합 세션이면 원본 질문을 내보낸다(두 룸이 같은 Q&A 를 쓰므로 같은 파일이 나온다).
   const { data: questions, error: qErr } = await supabase
     .from('questions')
     .select('*')
-    .eq('session_id', sessionId)
+    .eq('session_id', qaSessionId(session))
     .order('like_count', { ascending: false })
     .order('created_at', { ascending: true });
   if (qErr) throw qErr;

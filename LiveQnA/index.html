@@ -2211,7 +2211,13 @@
       };
 
       const handleSessionEdited = async (payload) => {
-        await mockApi.updateSession(editSession.id, payload);
+        try {
+          await mockApi.updateSession(editSession.id, payload);
+        } catch (e) {
+          // 서버가 Q&A 통합 유효성(체인·비공개 원본·다른 행사 등)으로 거절하면 사유를 그대로 보여준다.
+          toast.show((e && e.message) || '세션 수정에 실패했습니다', 'error');
+          return;
+        }
         setEditSession(null);
         await load();
         toast.show('세션이 수정되었습니다', 'success');
@@ -2562,7 +2568,9 @@
             project={project} rooms={roomListFromTracks(tracks)} />
           <SessionFormModal isOpen={modalOpen} onClose={() => setModalOpen(false)} onSubmit={handleCreated} tracks={tracks} />
           <SessionFormModal mode="edit" session={editSession} isOpen={!!editSession}
-            onClose={() => setEditSession(null)} onSubmit={handleSessionEdited} tracks={tracks} />
+            onClose={() => setEditSession(null)} onSubmit={handleSessionEdited} tracks={tracks}
+            // Q&A 통합 대상 후보: 자기 자신 제외 + 이미 다른 세션의 Q&A 를 쓰는 세션 제외(체인 금지).
+            siblings={(sessions || []).filter((s) => editSession && s.id !== editSession.id && !s.qa_parent_id)} />
           <TrackFormModal isOpen={trackModalOpen} onClose={() => setTrackModalOpen(false)} onSubmit={handleTrackCreated} />
           <BulkUploadModal isOpen={uploadOpen} onClose={() => setUploadOpen(false)} onSubmit={handleImported} />
           <SheetSyncModal isOpen={sheetOpen} onClose={() => setSheetOpen(false)} project={project}
@@ -3026,8 +3034,9 @@
       return (y && m && da) ? `${y}-${m}-${da}` : '';
     };
 
-    const emptySessionForm = { name: '', speaker: '', track_id: '', duration: '', session_date: '', is_public: true };
-    const SessionFormModal = ({ isOpen, onClose, onSubmit, mode = 'create', session = null, tracks = [] }) => {
+    const emptySessionForm = { name: '', speaker: '', track_id: '', duration: '', session_date: '', is_public: true, qa_parent_id: '' };
+    //  siblings: 같은 프로젝트의 다른 세션들 — 'Q&A 통합' 대상 선택지로 쓴다.
+    const SessionFormModal = ({ isOpen, onClose, onSubmit, mode = 'create', session = null, tracks = [], siblings = [] }) => {
       const [form, setForm] = useState(emptySessionForm);
       const [error, setError] = useState('');
       const [submitting, setSubmitting] = useState(false);
@@ -3045,6 +3054,7 @@
             //  혹시 없는 경로(anon 조회 등)로 들어온 객체면 starts_at 에서 직접 뽑는다.
             session_date: session.session_date || toYmdKST(session.starts_at),
             is_public: !!session.is_public,
+            qa_parent_id: session.qa_parent_id || '',
           });
         } else {
           setForm(emptySessionForm);
@@ -3094,6 +3104,29 @@
                 className="w-5 h-5 rounded" />
               <span className="text-sm text-ink-700 dark:text-ink-300">공개 세션 (사용자에게 노출)</span>
             </label>
+
+            {/* 🔗 Q&A 통합 — 같은 강연을 두 룸에서 병행할 때, 질문/좋아요를 한 곳으로 모은다.
+                세션 레코드는 룸마다 그대로 두고(타임테이블 필요) 질문만 원본 것을 쓴다.
+                수정 모드에서만 노출 — 생성 직후엔 대상 세션이 아직 없을 수 있다. */}
+            {isEdit && siblings.length > 0 && (
+              <div>
+                <label className={labelCls}>Q&amp;A 통합</label>
+                <select value={form.qa_parent_id} onChange={update('qa_parent_id')}
+                  className={`${fieldBase} ${fieldNormal}`}>
+                  <option value="">이 세션의 Q&amp;A 사용 (기본)</option>
+                  {siblings.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}{s.track_name ? ` — ${s.track_name}` : ''}{s.duration ? ` (${s.duration})` : ''}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-ink-400 dark:text-ink-500 mt-1 leading-relaxed">
+                  {form.qa_parent_id
+                    ? '이 세션의 참가자는 위 세션과 같은 질문 목록을 보고, 좋아요도 함께 집계됩니다.'
+                    : '같은 강연을 두 룸에서 진행할 때, 한쪽을 원본으로 지정하면 질문이 하나로 모입니다.'}
+                </p>
+              </div>
+            )}
           </div>
           <div className="flex gap-2 justify-end mt-5">
             <Button variant="secondary" onClick={onClose}>취소</Button>
@@ -3442,14 +3475,18 @@
           const meta = await mockApi.fetchPublicSession(codeOrId, previewToken);
           // 사용자 페이지는 name/duration 을 쓰므로 매핑.
           setSession(mapSessionRow(meta));
-          setResolvedId(meta.id);
+          // 🔗 질문을 읽고 쓸 대상 id. 보통은 세션 자신이지만, 같은 강연을 두 룸에서
+          //  병행할 때처럼 Q&A 를 통합한 세션이면 서버가 원본 id 를 준다.
+          //  resolvedId 하나만 바꾸면 목록·등록·좋아요·Realtime·폴링이 전부 따라온다.
+          const qaId = meta.qa_session_id || meta.id;
+          setResolvedId(qaId);
           setProjectCode(meta.project_code || '');
           setProjectId(meta.project_id || '');
           // 질문: 공개 세션은 anon(sb) 직접 호출(기존 그대로).
           //  비공개 세션 미리보기는 anon RLS 로 막히므로 ?pv= 서버 경로로 받는다.
           const list = meta.is_public === false && previewToken
             ? await mockApi.fetchPublicQuestions(codeOrId, previewToken)
-            : await mockApi.fetchQuestions(meta.id, 'user');
+            : await mockApi.fetchQuestions(qaId, 'user');
           setQuestions(list);
           // 투표 상태는 **누적만** 한다(교체 금지). 질문 등록 직후처럼 load() 가 도는 도중
           //  좋아요를 누르면, 아직 recordVote 전인 localStorage 값으로 덮여서
