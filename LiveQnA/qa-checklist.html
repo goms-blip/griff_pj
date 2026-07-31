@@ -1,0 +1,552 @@
+<title>LiveQnA 테스트 체크리스트</title>
+
+<style>
+  :root {
+    --paper: #f5f8f7;
+    --surface: #ffffff;
+    --surface-2: #eef2f1;
+    --line: #dbe3e1;
+    --line-soft: #e7edeb;
+    --ink: #121715;
+    --ink-2: #3d4744;
+    --muted: #6a7775;
+    --accent: #1b6f68;
+    --accent-soft: #e3f0ee;
+    --pass: #2f7d4f;
+    --pass-soft: #e4f1e9;
+    --issue: #b03a3a;
+    --issue-soft: #f8e6e4;
+    --warn: #8d6408;
+    --warn-soft: #faf0d9;
+
+    --sans: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont,
+            "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, "Consolas", monospace;
+
+    --wrap: 940px;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #0e1211;
+      --surface: #151a19;
+      --surface-2: #1c2322;
+      --line: #2a3331;
+      --line-soft: #222a29;
+      --ink: #e8edeb;
+      --ink-2: #b6c1be;
+      --muted: #8a9794;
+      --accent: #59b9b1;
+      --accent-soft: #16302e;
+      --pass: #6fbf8d;
+      --pass-soft: #162c20;
+      --issue: #e08b86;
+      --issue-soft: #33201f;
+      --warn: #d7ab55;
+      --warn-soft: #2c2413;
+    }
+  }
+  :root[data-theme="light"] {
+    --paper: #f5f8f7; --surface: #ffffff; --surface-2: #eef2f1;
+    --line: #dbe3e1; --line-soft: #e7edeb;
+    --ink: #121715; --ink-2: #3d4744; --muted: #6a7775;
+    --accent: #1b6f68; --accent-soft: #e3f0ee;
+    --pass: #2f7d4f; --pass-soft: #e4f1e9;
+    --issue: #b03a3a; --issue-soft: #f8e6e4;
+    --warn: #8d6408; --warn-soft: #faf0d9;
+  }
+  :root[data-theme="dark"] {
+    --paper: #0e1211; --surface: #151a19; --surface-2: #1c2322;
+    --line: #2a3331; --line-soft: #222a29;
+    --ink: #e8edeb; --ink-2: #b6c1be; --muted: #8a9794;
+    --accent: #59b9b1; --accent-soft: #16302e;
+    --pass: #6fbf8d; --pass-soft: #162c20;
+    --issue: #e08b86; --issue-soft: #33201f;
+    --warn: #d7ab55; --warn-soft: #2c2413;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  .wrap { max-width: var(--wrap); margin: 0 auto; padding: 0 20px; }
+
+  /* ── 상단 고정 진행 바 ─────────────────────────── */
+  .topbar {
+    position: sticky; top: 0; z-index: 20;
+    background: color-mix(in srgb, var(--paper) 92%, transparent);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--line);
+  }
+  .topbar-inner {
+    max-width: var(--wrap); margin: 0 auto; padding: 10px 20px;
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  }
+  .topbar-title {
+    font-size: 13px; font-weight: 700; letter-spacing: -0.01em;
+    margin-right: auto; display: flex; align-items: baseline; gap: 8px;
+  }
+  .topbar-title span { font-family: var(--mono); font-size: 11px; color: var(--muted); letter-spacing: 0.04em; }
+  .meter { flex: 1 1 160px; min-width: 120px; height: 6px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
+  .meter i { display: block; height: 100%; width: 0%; background: var(--accent); transition: width .25s ease; }
+  .tally { font-family: var(--mono); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .tally b { color: var(--ink); font-weight: 700; }
+  .tally .bad { color: var(--issue); }
+
+  /* ── 헤더 ─────────────────────────────────────── */
+  header.page { padding: 40px 0 28px; }
+  .eyebrow {
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.16em;
+    text-transform: uppercase; color: var(--accent); margin: 0 0 10px;
+  }
+  h1 {
+    font-size: clamp(28px, 5vw, 40px); line-height: 1.15; letter-spacing: -0.03em;
+    font-weight: 800; margin: 0 0 12px; text-wrap: balance;
+  }
+  .lede { font-size: 17px; color: var(--ink-2); margin: 0; max-width: 62ch; }
+
+  .facts {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 1px; background: var(--line); border: 1px solid var(--line);
+    border-radius: 10px; overflow: hidden; margin-top: 24px;
+  }
+  .fact { background: var(--surface); padding: 12px 14px; }
+  .fact dt { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); margin: 0 0 4px; }
+  .fact dd { margin: 0; font-size: 14px; font-weight: 600; }
+
+  /* ── 안내 박스 ───────────────────────────────── */
+  .note {
+    border: 1px solid var(--line); border-left: 3px solid var(--accent);
+    background: var(--surface); border-radius: 8px;
+    padding: 14px 16px; margin: 24px 0; font-size: 14.5px; color: var(--ink-2);
+  }
+  .note.caution { border-left-color: var(--warn); background: var(--warn-soft); color: var(--ink); }
+  .note strong { color: var(--ink); }
+  .note p { margin: 0; }
+  .note p + p { margin-top: 8px; }
+
+  /* ── 링크 목록 ───────────────────────────────── */
+  .links { display: grid; gap: 8px; margin: 18px 0 0; padding: 0; list-style: none; }
+  .links li {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: 8px; padding: 10px 12px;
+  }
+  .links .rm { font-size: 14px; font-weight: 700; min-width: 9.5em; }
+  .links a {
+    font-family: var(--mono); font-size: 12.5px; color: var(--accent);
+    text-decoration: none; word-break: break-all;
+  }
+  .links a:hover, .links a:focus-visible { text-decoration: underline; }
+
+  /* ── 섹션 ─────────────────────────────────────── */
+  section { margin-top: 44px; }
+  .sec-head {
+    display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+    padding-bottom: 10px; border-bottom: 2px solid var(--ink);
+  }
+  .sec-head h2 { font-size: 20px; font-weight: 800; letter-spacing: -0.02em; margin: 0; }
+  .sec-head .who { font-size: 13px; color: var(--muted); margin-right: auto; }
+  .sec-count { font-family: var(--mono); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+  /* ── 체크 항목 ───────────────────────────────── */
+  .item {
+    display: grid;
+    grid-template-columns: 3.2rem 1fr auto;
+    gap: 4px 14px;
+    padding: 16px 0;
+    border-bottom: 1px solid var(--line-soft);
+    align-items: start;
+  }
+  .code {
+    font-family: var(--mono); font-size: 12px; font-weight: 700;
+    color: var(--muted); padding-top: 2px; letter-spacing: 0.02em;
+  }
+  .body h3 { font-size: 15.5px; font-weight: 700; margin: 0 0 4px; line-height: 1.45; }
+  .expect { font-size: 14px; color: var(--ink-2); margin: 0; }
+  .expect::before {
+    content: "기대"; font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em;
+    color: var(--muted); border: 1px solid var(--line); border-radius: 4px;
+    padding: 1px 5px; margin-right: 7px; vertical-align: 1.5px;
+  }
+  .marks { display: flex; gap: 6px; }
+  .mark {
+    font-family: var(--sans); font-size: 12.5px; font-weight: 700;
+    border: 1px solid var(--line); background: var(--surface); color: var(--muted);
+    border-radius: 6px; padding: 6px 12px; cursor: pointer; line-height: 1;
+    transition: background .12s, color .12s, border-color .12s;
+  }
+  .mark:hover { border-color: var(--muted); }
+  .mark:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .item[data-state="pass"] .mark[data-v="pass"] { background: var(--pass-soft); border-color: var(--pass); color: var(--pass); }
+  .item[data-state="issue"] .mark[data-v="issue"] { background: var(--issue-soft); border-color: var(--issue); color: var(--issue); }
+  .item[data-state="pass"] .body h3 { color: var(--muted); text-decoration: line-through; text-decoration-thickness: 1px; }
+  .item[data-state="issue"] { background: color-mix(in srgb, var(--issue-soft) 45%, transparent); }
+
+  .memo { grid-column: 2 / -1; display: none; margin-top: 10px; }
+  .item[data-state="issue"] .memo { display: block; }
+  .memo textarea {
+    width: 100%; min-height: 64px; resize: vertical;
+    font-family: var(--sans); font-size: 14px; line-height: 1.5; color: var(--ink);
+    background: var(--surface); border: 1px solid var(--issue); border-radius: 6px; padding: 9px 11px;
+  }
+  .memo textarea:focus-visible { outline: 2px solid var(--issue); outline-offset: 1px; }
+
+  /* ── 리포트 ───────────────────────────────────── */
+  .report { margin-top: 44px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 22px; }
+  .report h2 { font-size: 18px; font-weight: 800; margin: 0 0 6px; letter-spacing: -0.02em; }
+  .report p.sub { margin: 0 0 16px; font-size: 14.5px; color: var(--ink-2); }
+  .who-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin-bottom: 14px; }
+  .who-fields label { display: block; }
+  .who-fields span {
+    display: block; font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--muted); margin-bottom: 5px;
+  }
+  .who-fields input {
+    width: 100%; font-family: var(--sans); font-size: 14.5px; color: var(--ink);
+    background: var(--paper); border: 1px solid var(--line); border-radius: 6px; padding: 9px 11px;
+  }
+  .who-fields input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  button.act {
+    font-family: var(--sans); font-size: 14px; font-weight: 700; cursor: pointer;
+    border-radius: 7px; padding: 10px 16px; line-height: 1; border: 1px solid var(--line);
+    background: var(--surface); color: var(--ink);
+  }
+  button.act.primary { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+  button.act:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button.act:hover { border-color: var(--muted); }
+  button.act.primary:hover { filter: brightness(1.08); border-color: var(--accent); }
+  pre.out {
+    margin: 16px 0 0; background: var(--paper); border: 1px solid var(--line); border-radius: 8px;
+    padding: 14px; font-family: var(--mono); font-size: 12.5px; line-height: 1.65;
+    white-space: pre-wrap; word-break: break-word; color: var(--ink-2); max-height: 340px; overflow: auto;
+  }
+
+  footer.page { margin: 40px 0 56px; padding-top: 18px; border-top: 1px solid var(--line); font-size: 13px; color: var(--muted); }
+  footer.page code { font-family: var(--mono); font-size: 12px; }
+
+  @media (max-width: 620px) {
+    .item { grid-template-columns: 2.8rem 1fr; }
+    .marks { grid-column: 2 / -1; margin-top: 10px; }
+    .memo { grid-column: 1 / -1; }
+    .topbar-title { width: 100%; margin-right: 0; }
+  }
+
+  @media print {
+    .topbar, .marks, .actions, .report .who-fields, pre.out { display: none; }
+    body { background: #fff; }
+    .item { break-inside: avoid; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
+  }
+</style>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <div class="topbar-title">LiveQnA 테스트 <span>2026-08 언리얼 페스트</span></div>
+    <div class="meter" role="progressbar" aria-label="진행률" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="meter"><i id="meterFill"></i></div>
+    <div class="tally" id="tally">0 / 0</div>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <header class="page">
+    <p class="eyebrow">현장 테스트 · 체크리스트</p>
+    <h1>행사 전에 실제 폰으로 한 번 돌려봐 주세요</h1>
+    <p class="lede">
+      참가자가 QR을 찍는 순간부터 진행자가 질문을 정리하는 순간까지, 실제 행사에서 벌어질 일을 순서대로 따라가는 목록입니다.
+      각 항목은 <b>무엇을 하는지</b>와 <b>무엇이 나와야 정상인지</b>로 되어 있습니다. 다르게 동작하면 <b>문제</b>를 눌러 적어주세요.
+    </p>
+
+    <dl class="facts">
+      <div class="fact"><dt>대상 행사</dt><dd>언리얼 페스트 서울 26</dd></div>
+      <div class="fact"><dt>행사일</dt><dd>8월 20–21일</dd></div>
+      <div class="fact"><dt>룸</dt><dd>4개</dd></div>
+      <div class="fact"><dt>소요 시간</dt><dd>20–30분</dd></div>
+    </dl>
+  </header>
+
+  <div class="note caution">
+    <p><strong>테스트로 남긴 질문은 행사 전에 전부 삭제됩니다.</strong> 마음 편히 아무 내용이나 넣으셔도 됩니다. 다만 실명이나 개인정보는 넣지 말아 주세요.</p>
+    <p>세션 시간(8/20–21)이 아직 아니라서 대부분 <b>대기 화면</b>이 먼저 보입니다. 정상입니다 — <code>P2</code> 항목에서 확인합니다.</p>
+  </div>
+
+  <div class="note">
+    <p><strong>준비물</strong> — 실제 스마트폰(에뮬레이터 말고), 가능하면 iPhone·Android 각 1대. 라이트/다크 모드 둘 다 한 번씩 봐주세요.</p>
+    <p><strong>운영자·관리자 항목</strong>(<code>O</code>, <code>A</code>)은 토큰이 필요합니다. 담당자에게 따로 받아주세요 — 이 문서에는 넣지 않았습니다.</p>
+  </div>
+
+  <h2 style="font-size:15px;letter-spacing:-0.01em;margin:28px 0 0;">테스트 주소</h2>
+  <ul class="links">
+    <li><span class="rm">Harmony Ballroom 1</span><a href="https://liveqna-app.vercel.app/#/r/feb8a3/4809">liveqna-app.vercel.app/#/r/feb8a3/4809</a></li>
+    <li><span class="rm">Harmony Ballroom 2</span><a href="https://liveqna-app.vercel.app/#/r/feb8a3/53c4">liveqna-app.vercel.app/#/r/feb8a3/53c4</a></li>
+    <li><span class="rm">Harmony Ballroom 3</span><a href="https://liveqna-app.vercel.app/#/r/feb8a3/782c">liveqna-app.vercel.app/#/r/feb8a3/782c</a></li>
+    <li><span class="rm">Atlas</span><a href="https://liveqna-app.vercel.app/#/r/feb8a3/fd7b">liveqna-app.vercel.app/#/r/feb8a3/fd7b</a></li>
+    <li><span class="rm">행사 전체 목록</span><a href="https://liveqna-app.vercel.app/#/e/feb8a3">liveqna-app.vercel.app/#/e/feb8a3</a></li>
+  </ul>
+
+  <main id="list"></main>
+
+  <div class="report">
+    <h2>결과 보내기</h2>
+    <p class="sub">아래 정보를 채우고 <b>결과 복사</b>를 누르면 요약이 클립보드에 담깁니다. 그대로 담당자에게 붙여넣어 주세요.</p>
+    <div class="who-fields">
+      <label><span>이름</span><input id="who" placeholder="예: 오승훈" autocomplete="name"></label>
+      <label><span>기기 · OS</span><input id="dev" placeholder="예: iPhone 15 / iOS 18"></label>
+      <label><span>브라우저</span><input id="brw" placeholder="예: Safari"></label>
+      <label><span>네트워크</span><input id="net" placeholder="예: LTE / 사무실 와이파이"></label>
+    </div>
+    <div class="actions">
+      <button class="act primary" id="copyBtn" type="button">결과 복사</button>
+      <button class="act" id="previewBtn" type="button">미리보기</button>
+      <button class="act" id="resetBtn" type="button">체크 초기화</button>
+    </div>
+    <pre class="out" id="out" hidden></pre>
+  </div>
+
+  <footer class="page">
+    체크 상태는 이 브라우저에만 저장됩니다(다른 사람에게 전송되지 않습니다). 같은 기기에서 다시 열면 이어서 진행할 수 있습니다.<br>
+    문제를 발견하면 항목 번호(<code>Q3</code> 같은)와 함께 알려주시면 가장 빠릅니다.
+  </footer>
+
+</div>
+
+<script>
+  const SECTIONS = [
+    {
+      id: 'P', title: '룸 QR로 들어가기', who: '참가자 · 스마트폰',
+      items: [
+        ['룸 QR 주소를 폰에서 연다 (위 4개 중 아무거나)', '질문 페이지 또는 대기 화면이 뜬다. 상단에 룸 이름(예: Harmony Ballroom 1)이 보인다.'],
+        ['지금은 세션 시간이 아니므로 대기 화면을 확인한다', '“다음 세션” 제목과 시작 날짜·시각이 보인다. 세션 시작이 12시간 안이면 카운트다운으로 바뀐다.'],
+        ['“다른 룸” 버튼을 누른다', '4개 룸이 모두 나오고, 지금 보고 있는 룸에는 “현재 룸” 표시가 있다.'],
+        ['다른 룸을 하나 고른다', '그 룸 화면으로 바뀌고 상단 룸 이름도 함께 바뀐다.'],
+        ['“전체 세션” 버튼을 누른다', '행사 전체 세션 목록이 뜨고, 날짜(8/20·8/21)와 트랙으로 걸러진다.'],
+        ['목록에서 세션을 하나 눌러 들어간다', '그 세션의 질문 화면이 열리고 제목·시간·강연자가 목록과 같다.']
+      ]
+    },
+    {
+      id: 'Q', title: '질문 남기고 좋아요 누르기', who: '참가자 · 스마트폰',
+      items: [
+        ['“질문하기”에서 아무것도 안 채우고 등록을 누른다', '제목·이름·내용 각각에 빨간 안내가 뜨고 등록되지 않는다.'],
+        ['제목·이름·내용을 채워 등록한다', '창이 닫히고 목록 맨 위 근처에 방금 쓴 질문이 바로 보인다.'],
+        ['다른 기기(또는 다른 브라우저)로 같은 세션을 열어 질문을 등록한다', '먼저 열어둔 화면에 <b>새로고침하지 않아도</b> 몇 초 안에 그 질문이 나타난다.'],
+        ['질문의 좋아요 버튼을 누른다', '숫자가 1 늘고 버튼이 눌린 상태로 잠긴다. 다시 눌러도 더 늘지 않는다.'],
+        ['페이지를 새로고침한다', '좋아요를 누른 질문은 여전히 눌린 상태로 남아 있다.'],
+        ['질문 여러 개에 좋아요를 다르게 눌러본다', '좋아요가 많은 질문이 위로 올라간다.'],
+        ['제목·이름·내용에 아주 긴 글을 넣어본다', '제목 50자, 이름 20자, 내용 500자를 넘겨 입력되지 않는다(입력칸에 글자 수가 보인다).'],
+        ['욕설이 섞인 질문을 등록해본다', '등록되지 않고 “부적절한 표현” 안내가 뜬다.']
+      ]
+    },
+    {
+      id: 'V', title: '화면과 사용감', who: '참가자 · 스마트폰',
+      items: [
+        ['우측 상단 해/달 아이콘으로 다크모드를 켠다', '글자·버튼이 모두 잘 보인다. 눈에 띄게 안 보이는 요소가 없다.'],
+        ['폰을 가로로 눕혀본다', '레이아웃이 깨지지 않고 버튼이 화면 밖으로 나가지 않는다.'],
+        ['질문이 여러 개인 세션에서 스크롤해본다', '끊김 없이 스크롤되고 하단 “질문하기” 버튼은 계속 손에 닿는 위치에 있다.'],
+        ['QR을 찍고 첫 화면이 뜰 때까지 걸리는 시간을 본다', '몇 초 안에 뜬다. 흰 화면으로 오래 머무르지 않는다.']
+      ]
+    },
+    {
+      id: 'O', title: '진행자 화면', who: '운영자 · 노트북 (토큰 필요)',
+      items: [
+        ['룸 운영자 주소를 열고 운영자 코드를 입력한다', '그 룸에서 지금 진행 중인 세션의 질문 목록이 뜬다.'],
+        ['상단 필터를 전체·답변대기·답변완료·숨김으로 바꿔본다', '각 상태의 질문만 걸러진다. 기본 정렬은 좋아요 많은 순이다.'],
+        ['질문 하나를 “답변완료”로 바꾼다', '참가자 화면의 같은 질문에 “답변완료” 배지가 붙는다.'],
+        ['질문 하나를 “숨김” 처리한다', '참가자 화면에서 <b>새로고침 없이</b> 그 질문이 사라진다.'],
+        ['질문 하나를 삭제한다', '참가자 화면에서 20초 안에 사라진다(숨김보다 조금 느린 것이 정상).'],
+        ['영어로 쓴 질문에 번역 버튼을 눌러본다', '한국어 번역이 질문 아래에 붙는다.'],
+        ['엑셀 다운로드를 눌러본다', '질문 목록이 담긴 엑셀 파일이 받아진다.']
+      ]
+    },
+    {
+      id: 'A', title: '관리자 콘솔', who: '담당자 · 노트북 (토큰 필요)',
+      items: [
+        ['프로젝트 상세에서 “룸 QR”을 연다', '룸 4개의 QR이 뜨고 각각 URL·PNG·SVG 버튼이 있다.'],
+        ['SVG를 내려받아 열어본다', 'QR 아래에 룸 이름이 함께 보인다. 크게 확대해도 깨지지 않는다.'],
+        ['“SVG는 QR만 저장”을 켜고 다시 받는다', '글자 없이 정사각형 QR만 나온다. 파일명 끝에 <code>_qr-only</code>가 붙는다.'],
+        ['SVG를 실제로 한 장 인쇄해서 폰으로 스캔한다', '인쇄물이 정상적으로 인식되고 해당 룸 화면이 열린다.'],
+        ['세션을 하나 수정해 행사 날짜를 바꿔본다', '날짜만 바뀌고 시작·종료 시각은 그대로 유지된다.'],
+        ['세션을 비공개로 바꾼 뒤 참가자 주소로 접속한다', '“세션을 찾을 수 없습니다”가 뜬다. 다시 공개로 바꾸면 정상적으로 열린다.'],
+        ['8/21 16:00 NTE 세션을 두 룸에서 각각 열어본다', '두 룸이 <b>같은 질문 목록</b>을 보여준다(Q&A 통합).']
+      ]
+    }
+  ];
+
+  const KEY = 'liveqna-qa-checklist-v1';
+  const load = () => { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch (e) { return {}; } };
+  const save = (s) => { try { localStorage.setItem(KEY, JSON.stringify(s)); } catch (e) {} };
+  let state = load();
+
+  const listEl = document.getElementById('list');
+  const allCodes = [];
+
+  SECTIONS.forEach((sec) => {
+    const s = document.createElement('section');
+    const head = document.createElement('div');
+    head.className = 'sec-head';
+    head.innerHTML =
+      '<h2>' + sec.title + '</h2>' +
+      '<p class="who">' + sec.who + '</p>' +
+      '<span class="sec-count" data-sec="' + sec.id + '"></span>';
+    s.appendChild(head);
+
+    sec.items.forEach((it, i) => {
+      const code = sec.id + (i + 1);
+      allCodes.push({ code, title: it[0], expect: it[1] });
+      const row = document.createElement('div');
+      row.className = 'item';
+      row.dataset.code = code;
+      row.dataset.sec = sec.id;
+      row.dataset.state = (state[code] && state[code].v) || '';
+      row.innerHTML =
+        '<div class="code">' + code + '</div>' +
+        '<div class="body"><h3>' + it[0] + '</h3><p class="expect">' + it[1] + '</p></div>' +
+        '<div class="marks">' +
+          '<button class="mark" type="button" data-v="pass" aria-pressed="false">통과</button>' +
+          '<button class="mark" type="button" data-v="issue" aria-pressed="false">문제</button>' +
+        '</div>' +
+        '<div class="memo"><textarea placeholder="무엇이 어떻게 달랐나요? (예: 좋아요를 눌러도 숫자가 안 늘어남)"></textarea></div>';
+      s.appendChild(row);
+    });
+
+    listEl.appendChild(s);
+  });
+
+  // 상태 적용
+  document.querySelectorAll('.item').forEach((row) => {
+    const code = row.dataset.code;
+    const st = state[code] || {};
+    row.dataset.state = st.v || '';
+    const ta = row.querySelector('textarea');
+    if (st.memo) ta.value = st.memo;
+    row.querySelectorAll('.mark').forEach((b) => {
+      b.setAttribute('aria-pressed', String(st.v === b.dataset.v));
+    });
+  });
+
+  function refresh() {
+    const total = allCodes.length;
+    let done = 0, issues = 0;
+    const bySec = {};
+    document.querySelectorAll('.item').forEach((row) => {
+      const v = row.dataset.state;
+      const sec = row.dataset.sec;
+      bySec[sec] = bySec[sec] || { done: 0, total: 0 };
+      bySec[sec].total++;
+      if (v) { done++; bySec[sec].done++; }
+      if (v === 'issue') issues++;
+    });
+    const pct = total ? Math.round((done / total) * 100) : 0;
+    document.getElementById('meterFill').style.width = pct + '%';
+    document.getElementById('meter').setAttribute('aria-valuenow', String(pct));
+    document.getElementById('tally').innerHTML =
+      '<b>' + done + '</b> / ' + total + (issues ? ' · <span class="bad">문제 ' + issues + '</span>' : '');
+    Object.keys(bySec).forEach((k) => {
+      const el = document.querySelector('.sec-count[data-sec="' + k + '"]');
+      if (el) el.textContent = bySec[k].done + '/' + bySec[k].total;
+    });
+  }
+
+  listEl.addEventListener('click', (e) => {
+    const btn = e.target.closest('.mark');
+    if (!btn) return;
+    const row = btn.closest('.item');
+    const code = row.dataset.code;
+    const v = btn.dataset.v;
+    const next = row.dataset.state === v ? '' : v;
+    row.dataset.state = next;
+    row.querySelectorAll('.mark').forEach((b) => b.setAttribute('aria-pressed', String(next === b.dataset.v)));
+    state[code] = Object.assign({}, state[code], { v: next });
+    save(state); refresh();
+    if (next === 'issue') row.querySelector('textarea').focus();
+  });
+
+  listEl.addEventListener('input', (e) => {
+    if (e.target.tagName !== 'TEXTAREA') return;
+    const row = e.target.closest('.item');
+    const code = row.dataset.code;
+    state[code] = Object.assign({}, state[code], { memo: e.target.value });
+    save(state);
+  });
+
+  function buildReport() {
+    const who = document.getElementById('who').value.trim() || '(이름 미기입)';
+    const dev = document.getElementById('dev').value.trim() || '(기기 미기입)';
+    const brw = document.getElementById('brw').value.trim() || '(브라우저 미기입)';
+    const net = document.getElementById('net').value.trim() || '(네트워크 미기입)';
+    const issues = [], untouched = [];
+    let pass = 0;
+    allCodes.forEach((it) => {
+      const st = state[it.code] || {};
+      if (st.v === 'pass') pass++;
+      else if (st.v === 'issue') issues.push({ ...it, memo: (st.memo || '').trim() });
+      else untouched.push(it.code);
+    });
+    const lines = [];
+    lines.push('LiveQnA 테스트 결과');
+    lines.push('테스터: ' + who);
+    lines.push('환경: ' + dev + ' / ' + brw + ' / ' + net);
+    lines.push('결과: 통과 ' + pass + ' · 문제 ' + issues.length + ' · 미확인 ' + untouched.length + ' (전체 ' + allCodes.length + ')');
+    lines.push('');
+    if (issues.length) {
+      lines.push('── 문제 ──');
+      issues.forEach((it) => {
+        lines.push('[' + it.code + '] ' + it.title);
+        lines.push('  기대: ' + it.expect.replace(/<[^>]+>/g, ''));
+        lines.push('  실제: ' + (it.memo || '(설명 없음)'));
+        lines.push('');
+      });
+    } else {
+      lines.push('문제로 표시된 항목 없음');
+      lines.push('');
+    }
+    if (untouched.length) lines.push('미확인: ' + untouched.join(', '));
+    return lines.join('\n');
+  }
+
+  const out = document.getElementById('out');
+  document.getElementById('previewBtn').addEventListener('click', () => {
+    out.textContent = buildReport();
+    out.hidden = false;
+    out.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  });
+
+  document.getElementById('copyBtn').addEventListener('click', async () => {
+    const text = buildReport();
+    const btn = document.getElementById('copyBtn');
+    try {
+      await navigator.clipboard.writeText(text);
+      btn.textContent = '복사됨';
+    } catch (e) {
+      out.textContent = text; out.hidden = false;
+      btn.textContent = '아래 내용을 직접 복사해 주세요';
+    }
+    setTimeout(() => { btn.textContent = '결과 복사'; }, 2200);
+  });
+
+  document.getElementById('resetBtn').addEventListener('click', () => {
+    if (!confirm('체크한 내용을 모두 지웁니다. 계속할까요?')) return;
+    state = {}; save(state);
+    document.querySelectorAll('.item').forEach((row) => {
+      row.dataset.state = '';
+      row.querySelector('textarea').value = '';
+      row.querySelectorAll('.mark').forEach((b) => b.setAttribute('aria-pressed', 'false'));
+    });
+    out.hidden = true;
+    refresh();
+  });
+
+  refresh();
+</script>
