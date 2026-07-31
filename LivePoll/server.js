@@ -114,6 +114,42 @@ const wrap = (fn) => (req, res) => Promise.resolve(fn(req, res)).catch((e) => {
 });
 
 // ============================================================
+// 🧹 세션 중복 정리 — 엑셀을 다시 올리면 같은 일정이 한 번 더 쌓인다.
+//   목록에는 같은 슬롯의 "가장 최근에 등록된" 행만 보여주고 이전 행은 숨긴다.
+//   숨김일 뿐 삭제가 아니므로 이미 배포된 예전 QR/링크(/#/s/:code)는 그대로 열린다.
+// ============================================================
+const normKey = (v) => String(v ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+function sessionDedupeKey(s) {
+  const room = normKey(s.room);
+  const date = normKey(s.session_date);
+  const time = normKey(s.time_range);
+  // 룸이 있으면 (날짜·시간·룸) 이 같은 행은 같은 세션이다 — 한 룸에서 동시에 두 세션은 열리지 않는다.
+  if (room && (date || time)) return `slot:${date}|${time}|${room}`;
+  // 룸을 모르면 제목까지 같아야 중복으로 본다 (같은 강연의 다른 회차를 숨기지 않도록).
+  return `title:${date}|${time}|${normKey(s.title ?? s.name)}`;
+}
+// rows → { visible: 최신 행만, duplicates: 숨겨진 이전 행, keepIdOf: 중복 id → 살아남은 id }
+function splitDuplicateSessions(rows) {
+  const at = (r) => Date.parse(r?.created_at || '') || 0;
+  const latest = new Map();
+  for (const r of rows || []) {
+    const k = sessionDedupeKey(r);
+    const cur = latest.get(k);
+    if (!cur || at(r) > at(cur)) latest.set(k, r);
+  }
+  const keep = new Set([...latest.values()].map((r) => r.id));
+  const keepIdOf = {};
+  for (const r of rows || []) {
+    if (!keep.has(r.id)) keepIdOf[r.id] = latest.get(sessionDedupeKey(r)).id;
+  }
+  return {
+    visible: (rows || []).filter((r) => keep.has(r.id)),
+    duplicates: (rows || []).filter((r) => !keep.has(r.id)),
+    keepIdOf,
+  };
+}
+
+// ============================================================
 // 🔢 결과 집계 (PRD 9.1 — 조회 시점 집계)
 // ============================================================
 async function fetchPollByCode(code) {
@@ -209,11 +245,13 @@ app.get('/api/public/projects/:projectCode', wrap(async (req, res) => {
   const trackName = {};
   (tracks || []).forEach((t) => { trackName[t.id] = t.name; });
 
-  const { data: sessions } = await supabase.from('sessions')
-    .select('id, code, title, speaker, track_id, session_date, time_range, room').eq('project_id', project.id).eq('is_public', true)
+  const { data: sessionRows } = await supabase.from('sessions')
+    .select('id, code, title, speaker, track_id, session_date, time_range, room, created_at').eq('project_id', project.id).eq('is_public', true)
     .order('created_at', { ascending: true });
+  // 재업로드로 생긴 이전 회차는 숨기고 최신 일정만 노출
+  const sessions = splitDuplicateSessions(sessionRows).visible;
   const sessionName = {};
-  (sessions || []).forEach((s) => { sessionName[s.id] = s.title; });
+  (sessionRows || []).forEach((s) => { sessionName[s.id] = s.title; });
 
   // 진행 중(live, 공개) Poll
   const { data: polls } = await supabase.from('polls')
@@ -227,6 +265,12 @@ app.get('/api/public/projects/:projectCode', wrap(async (req, res) => {
     title: project.title,
     client: project.client_name || '',
     status: project.status,
+    // 세션룸 화면의 자동 전환용 —
+    //   start_date: "8월 20일" 같은 자유 텍스트 일정에 연도를 붙일 기준
+    //   server_time: 참석자 단말 시계가 틀어져 있어도 서버 시각 기준으로 현재 세션을 판정
+    start_date: project.start_date || null,
+    end_date: project.end_date || null,
+    server_time: new Date().toISOString(),
     sessions: (sessions || []).map((s) => ({
       id: s.id, code: s.code, name: s.title, speaker: s.speaker || '',
       track_id: s.track_id, track_name: s.track_id ? (trackName[s.track_id] || '') : '',
@@ -492,8 +536,10 @@ app.get('/api/admin/projects', wrap(async (req, res) => {
   const { data: projects } = await supabase.from('projects').select('*').order('created_at', { ascending: false });
   const out = [];
   for (const p of projects || []) {
-    const { count: sessionCount } = await supabase.from('sessions')
-      .select('id', { count: 'exact', head: true }).eq('project_id', p.id);
+    // 세션 수는 중복(재업로드로 쌓인 이전 회차)을 뺀 값으로 센다.
+    const { data: sessionRows } = await supabase.from('sessions')
+      .select('id, title, session_date, time_range, room, created_at').eq('project_id', p.id);
+    const sessionCount = splitDuplicateSessions(sessionRows).visible.length;
     const { data: pollRows } = await supabase.from('polls').select('id').eq('project_id', p.id);
     const pollIds = (pollRows || []).map((r) => r.id);
     let responseCount = 0;
@@ -516,16 +562,43 @@ app.get('/api/admin/projects/:projectId', wrap(async (req, res) => {
   if (!p) return fail(res, 404, 'project_not_found');
   const { data: tracks } = await supabase.from('tracks')
     .select('id, name, sort_order').eq('project_id', p.id).order('sort_order');
-  const { data: sessions } = await supabase.from('sessions')
-    .select('id, code, title, speaker, track_id, is_public, session_date, time_range, room').eq('project_id', p.id).order('created_at', { ascending: true });
+  const { data: sessionRows } = await supabase.from('sessions')
+    .select('id, code, title, speaker, track_id, is_public, session_date, time_range, room, created_at').eq('project_id', p.id).order('created_at', { ascending: true });
+  // 최신 회차만 sessions 로 내려주고, 숨겨진 이전 회차는 duplicate_sessions 로 따로 알린다.
+  const { visible, duplicates } = splitDuplicateSessions(sessionRows);
+  const mapAdminSession = (s) => ({
+    id: s.id, code: s.code, name: s.title, speaker: s.speaker || '', track_id: s.track_id, is_public: s.is_public,
+    session_date: s.session_date || '', time_range: s.time_range || '', room: s.room || '', created_at: s.created_at,
+  });
   ok(res, {
     id: p.id, code: p.code, name: p.title, client: p.client_name || '', status: p.status,
     tracks: (tracks || []).map((t) => ({ id: t.id, name: t.name })),
-    sessions: (sessions || []).map((s) => ({
-      id: s.id, code: s.code, name: s.title, speaker: s.speaker || '', track_id: s.track_id, is_public: s.is_public,
-      session_date: s.session_date || '', time_range: s.time_range || '', room: s.room || '',
-    })),
+    sessions: visible.map(mapAdminSession),
+    duplicate_sessions: duplicates.map(mapAdminSession),
   });
+}));
+
+// 숨겨진 중복 세션 영구 삭제 (연결된 Poll 은 살아남은 최신 세션으로 옮긴 뒤 삭제)
+app.delete('/api/admin/projects/:projectId/sessions/duplicates', wrap(async (req, res) => {
+  const { data: sessionRows } = await supabase.from('sessions')
+    .select('id, title, session_date, time_range, room, created_at').eq('project_id', req.params.projectId)
+    .order('created_at', { ascending: true });
+  const { duplicates, keepIdOf } = splitDuplicateSessions(sessionRows);
+  if (!duplicates.length) return ok(res, { deleted: 0, moved_polls: 0 });
+
+  const dupIds = duplicates.map((s) => s.id);
+  const { data: attachedPolls } = await supabase.from('polls').select('id, session_id').in('session_id', dupIds);
+  let movedPolls = 0;
+  for (const poll of attachedPolls || []) {
+    const keepId = keepIdOf[poll.session_id];
+    if (!keepId) continue;
+    const { error } = await supabase.from('polls').update({ session_id: keepId }).eq('id', poll.id);
+    if (error) return fail(res, 400, error.message);
+    movedPolls += 1;
+  }
+  const { error } = await supabase.from('sessions').delete().in('id', dupIds);
+  if (error) return fail(res, 400, error.message);
+  ok(res, { deleted: dupIds.length, moved_polls: movedPolls });
 }));
 
 // 프로젝트 생성

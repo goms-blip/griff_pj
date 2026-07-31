@@ -92,6 +92,8 @@
         'list-checks': <><path d="M3 6l2 2 3-3M3 14l2 2 3-3" /><path d="M13 7h8M13 15h8M13 11h8" /></>,
         users: <><path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" /></>,
         layers: <><path d="M12 2L2 7l10 5 10-5-10-5z" /><path d="M2 17l10 5 10-5M2 12l10 5 10-5" /></>,
+        download: <><path d="M12 3v12" /><path d="M7 11l5 5 5-5" /><path d="M4 20h16" /></>,
+        alert: <><path d="M12 3l9.5 16.5a1 1 0 01-.9 1.5H3.4a1 1 0 01-.9-1.5L12 3z" /><path d="M12 9v5M12 17.5h.01" /></>,
       };
       return <svg {...p} aria-hidden="true">{paths[name]}</svg>;
     }
@@ -187,6 +189,7 @@
       deleteSession: (sessionId) => request(`/admin/sessions/${sessionId}`, { method: 'DELETE' }),
       createTrack: (projectId, body) => request(`/admin/projects/${projectId}/tracks`, { method: 'POST', body }),
       importSessions: (projectId, body) => request(`/admin/projects/${projectId}/sessions/import`, { method: 'POST', body }),
+      deleteDuplicateSessions: (projectId) => request(`/admin/projects/${projectId}/sessions/duplicates`, { method: 'DELETE' }),
       downloadSessionTemplate: (projectId) => download(`/admin/projects/${projectId}/sessions/import-template`, 'sessions-template.xlsx'),
       updateTrack: (trackId, body) => request(`/admin/tracks/${trackId}`, { method: 'PATCH', body }),
       deleteTrack: (trackId) => request(`/admin/tracks/${trackId}`, { method: 'DELETE' }),
@@ -702,12 +705,12 @@
     // ========================================
     // 🔳 QR 코드 (실시간 생성 — qrcode-generator, 클라이언트에서 즉시 그림)
     // ========================================
-    function makeQR(text) {
+    function makeQR(text, cellSize = 8, margin = 2) {
       try {
         const qr = qrcode(0, 'M'); // 자동 크기, 오류정정 M
         qr.addData(String(text || ''));
         qr.make();
-        return qr.createDataURL(8, 2); // cellSize 8px, margin 2모듈
+        return qr.createDataURL(cellSize, margin);
       } catch (e) { return ''; }
     }
     function QRModal({ url, title, onClose }) {
@@ -742,6 +745,77 @@
     }
 
     // ========================================
+    // 🖨️ 세션룸 QR — 룸 앞에 붙일 안내물(A4 1장/룸)을 새 창에서 인쇄·PDF 저장
+    //   rooms: [{ room, url, items:[{session_date,time_range,name,speaker}] }]
+    // ========================================
+    const esc = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const qrFileName = (s) => `qr-${String(s || 'link').replace(/[^\w가-힣-]+/g, '_').slice(0, 40)}`;
+
+    // 고해상도 QR 이미지 저장 (인쇄용 — cellSize 20)
+    function downloadQRImage(url, name) {
+      const dataUrl = makeQR(url, 20, 4);
+      if (!dataUrl) return false;
+      const a = document.createElement('a');
+      a.href = dataUrl; a.download = `${qrFileName(name)}.gif`;
+      document.body.appendChild(a); a.click(); a.remove();
+      return true;
+    }
+
+    function openRoomQRPrint(rooms, meta = {}) {
+      const w = window.open('', '_blank');
+      if (!w) return false;
+      const pages = rooms.map((r) => {
+        const list = (r.items || []).slice(0, 14).map((s) => `
+          <li><span class="t">${esc(s.session_date || '')} ${esc(s.time_range || '')}</span><span class="n">${esc(s.name)}</span></li>`).join('');
+        const more = (r.items || []).length > 14 ? `<li class="more">외 ${(r.items || []).length - 14}개 세션</li>` : '';
+        return `
+        <section class="page">
+          <div class="top">
+            <div class="event">${esc(meta.projectTitle || '')}</div>
+            <h1 class="room">${esc(r.room)}</h1>
+            ${meta.dateLabel ? `<div class="date">📅 ${esc(meta.dateLabel)}</div>` : ''}
+          </div>
+          <div class="qrbox">
+            <img class="qr" src="${makeQR(r.url, 20, 4)}" alt="QR" />
+            <div class="guide">휴대폰 카메라로 QR을 스캔하세요</div>
+            <div class="sub">지금 이 룸에서 진행 중인 세션과 투표가 바로 열립니다</div>
+            <div class="url">${esc(r.url)}</div>
+          </div>
+          ${list ? `<ul class="sessions">${list}${more}</ul>` : ''}
+        </section>`;
+      }).join('');
+      const css = `
+        * { box-sizing: border-box; }
+        body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Pretendard', 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif; color: #0f172a; }
+        .page { width: 210mm; min-height: 297mm; padding: 18mm 16mm; display: flex; flex-direction: column; align-items: center; page-break-after: always; }
+        .page:last-child { page-break-after: auto; }
+        .top { text-align: center; }
+        .event { font-size: 14pt; font-weight: 700; color: #64748b; letter-spacing: -0.01em; }
+        .room { font-size: 40pt; font-weight: 800; margin: 4mm 0 0; letter-spacing: -0.02em; line-height: 1.1; word-break: keep-all; }
+        .date { margin-top: 3mm; font-size: 15pt; font-weight: 700; color: #475569; }
+        .qrbox { margin-top: 10mm; text-align: center; }
+        .qr { width: 92mm; height: 92mm; image-rendering: pixelated; border: 1px solid #e2e8f0; border-radius: 4mm; padding: 3mm; background: #fff; }
+        .guide { margin-top: 6mm; font-size: 20pt; font-weight: 800; }
+        .sub { margin-top: 2mm; font-size: 13pt; color: #475569; }
+        .url { margin-top: 3mm; font-size: 9pt; color: #94a3b8; word-break: break-all; }
+        .sessions { list-style: none; margin: 10mm 0 0; padding: 0; width: 100%; border-top: 1px solid #e2e8f0; }
+        .sessions li { display: flex; gap: 5mm; padding: 2.2mm 0; border-bottom: 1px solid #f1f5f9; font-size: 10pt; }
+        .sessions .t { flex: 0 0 42mm; color: #64748b; font-weight: 700; white-space: nowrap; }
+        .sessions .n { flex: 1; font-weight: 600; word-break: keep-all; }
+        .sessions .more { color: #94a3b8; font-weight: 600; justify-content: center; }
+        @page { size: A4; margin: 0; }
+        @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+      `;
+      w.document.write(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>${esc(meta.projectTitle || '세션룸')} QR</title><style>${css}</style></head><body>${pages}</body></html>`);
+      w.document.close();
+      const doPrint = () => { try { w.focus(); w.print(); } catch (e) { /* 사용자가 창을 닫은 경우 */ } };
+      const imgs = Array.from(w.document.images || []);
+      Promise.all(imgs.map(img => img.complete ? null : new Promise(r => { img.onload = img.onerror = r; })))
+        .then(() => setTimeout(doPrint, 150));
+      return true;
+    }
+
+    // ========================================
     // 🔢 세션 스케줄 정렬 (날짜 → 시간)  ── "8월 20일" / "11:30~12:20" 자유 텍스트 파싱
     // ========================================
     function sessionSortKey(s) {
@@ -768,8 +842,11 @@
     //   변경 후 onChanged() 로 상위에서 getProject refetch.
     // ========================================
     const TRACKLESS = '__none__';
-    function SessionsTab({ projectId, projectCode, tracks, sessions, onChanged }) {
+    function SessionsTab({ projectId, projectCode, projectName, tracks, sessions, duplicates = [], onChanged }) {
       const toast = useToast();
+      const [showDuplicates, setShowDuplicates] = useState(false);
+      const [confirmDedupe, setConfirmDedupe] = useState(false);
+      const [dedupeBusy, setDedupeBusy] = useState(false);
       const [editSession, setEditSession] = useState(null); // session | {__new:true}
       const [confirmSession, setConfirmSession] = useState(null);
       const [deletingSession, setDeletingSession] = useState(false);
@@ -905,6 +982,43 @@
       const totalInView = groups.reduce((n, g) => n + g.items.length, 0);
       const visibleGroups = selectedTrackId ? groups.filter(g => g.id === selectedTrackId) : groups;
 
+      // 세션룸별 묶음 (선택 날짜 기준) — 룸 QR / 인쇄물의 원본
+      const rooms = useMemo(() => {
+        const src = selectedDate ? list.filter(s => s.session_date === selectedDate) : list;
+        const map = new Map();
+        src.forEach(s => {
+          const r = String(s.room || '').trim();
+          if (!r) return;
+          if (!map.has(r)) map.set(r, []);
+          map.get(r).push(s);
+        });
+        return [...map.entries()]
+          .map(([room, items]) => ({ room, items: sortSessionsBySchedule(items) }))
+          .sort((a, b) => a.room.localeCompare(b.room, 'ko'));
+      }, [list, selectedDate]);
+      // 룸 QR 은 날짜를 붙이지 않는다 — 참석자 화면이 시간표를 보고 그 시점의 세션을 자동으로 고른다.
+      // (포스터 1장으로 행사 전 기간 사용 가능)
+      const roomUrl = (room) => `${window.location.origin}/#/e/${projectCode}?room=${encodeURIComponent(room)}`;
+      const printRooms = (targets) => {
+        const opened = openRoomQRPrint(
+          targets.map(r => ({ room: r.room, url: roomUrl(r.room), items: r.items })),
+          { projectTitle: projectName || '', dateLabel: selectedDate || '' },
+        );
+        if (!opened) toast.error('팝업이 차단되었습니다. 브라우저에서 이 사이트의 팝업을 허용해주세요.');
+      };
+
+      // 숨겨진 중복 세션 영구 삭제
+      const doDedupe = async () => {
+        setDedupeBusy(true);
+        try {
+          const r = await api.deleteDuplicateSessions(projectId);
+          toast.success(`중복 세션 ${r.deleted}개를 삭제했습니다${r.moved_polls ? ` · Poll ${r.moved_polls}개는 최신 세션으로 이동` : ''}.`);
+          setConfirmDedupe(false); setShowDuplicates(false);
+          reload();
+        } catch (e) { toast.error(e.message); }
+        finally { setDedupeBusy(false); }
+      };
+
       return (
         <div className="space-y-5">
           {/* 트랙 영역 */}
@@ -961,6 +1075,75 @@
               className="block w-full text-xs text-ink-500 dark:text-ink-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:bg-emerald-50 dark:file:bg-emerald-950/50 file:text-emerald-700 dark:file:text-emerald-300 file:font-semibold file:text-xs hover:file:bg-emerald-100 dark:hover:file:bg-emerald-900/50 disabled:opacity-50" />
             {importing && <div className="flex items-center gap-2 mt-2 text-xs text-ink-500 dark:text-ink-400"><Spinner className="w-4 h-4" />업로드 중…</div>}
           </Card>
+
+          {/* 세션룸 QR — 룸 입구 안내물 */}
+          {projectCode && rooms.length > 0 && (
+            <Card className="p-5">
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
+                <div className="flex items-center gap-2">
+                  <span className="w-8 h-8 rounded-xl bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-300 flex items-center justify-center font-mono text-sm">▦</span>
+                  <h3 className="font-bold text-ink-800 dark:text-ink-100 text-sm">세션룸 QR</h3>
+                  <Badge tone="slate">{rooms.length}</Badge>
+                </div>
+                <Button size="sm" onClick={() => printRooms(rooms)}>
+                  <Icon name="download" className="w-4 h-4" />인쇄용 전체 다운로드
+                </Button>
+              </div>
+              <p className="text-xs text-ink-400 dark:text-ink-500 mb-3">
+                QR을 스캔하면 <b>그 시각에 이 룸에서 진행 중인 세션</b>(제목·연사·투표)이 자동으로 열리고, 세션이 바뀌면 화면도 알아서 넘어갑니다 · 다른 룸으로 이동하는 버튼도 함께 표시됩니다.
+                <span className="block mt-0.5">· QR에는 날짜가 들어가지 않습니다 — 포스터 1장으로 행사 전 기간 사용 가능{selectedDate ? <> (인쇄물의 일정표만 <b>{selectedDate}</b> 기준)</> : ''}.</span>
+                <span className="block mt-0.5">· 인쇄 창에서 <b>대상: PDF로 저장</b>을 고르면 A4 1장/룸으로 저장됩니다.</span>
+              </p>
+              <div className="grid gap-2.5 sm:grid-cols-2">
+                {rooms.map(r => (
+                  <div key={r.room} className="border border-ink-100 dark:border-ink-800 rounded-xl p-3.5 bg-white dark:bg-ink-900">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="font-semibold text-ink-800 dark:text-ink-100 truncate">📍 {r.room}</span>
+                      <Badge tone="slate">{r.items.length}</Badge>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1.5 mt-2.5">
+                      <QRButton url={roomUrl(r.room)} title={`${r.room}${selectedDate ? ` · ${selectedDate}` : ''}`} label="QR 보기" />
+                      <Button size="sm" variant="subtle"
+                        onClick={() => { downloadQRImage(roomUrl(r.room), `${r.room}${selectedDate ? `-${selectedDate}` : ''}`) ? toast.success('QR 이미지를 저장했습니다.') : toast.error('QR 생성에 실패했습니다.'); }}>
+                        <Icon name="download" className="w-3.5 h-3.5" />이미지
+                      </Button>
+                      <Button size="sm" variant="subtle" onClick={() => printRooms([r])}>인쇄</Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          )}
+
+          {/* 중복 세션 안내 (엑셀 재업로드로 쌓인 이전 회차 — 목록에서는 숨김) */}
+          {duplicates.length > 0 && (
+            <Card className="p-5 border-amber-200 dark:border-amber-900/60">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="w-8 h-8 rounded-xl bg-amber-50 dark:bg-amber-950/50 text-amber-600 dark:text-amber-300 flex items-center justify-center"><Icon name="alert" className="w-4 h-4" /></span>
+                  <div className="min-w-0">
+                    <h3 className="font-bold text-ink-800 dark:text-ink-100 text-sm">중복 세션 {duplicates.length}개를 숨겼습니다</h3>
+                    <p className="text-xs text-ink-400 dark:text-ink-500">같은 날짜·시간·세션룸으로 다시 등록된 이전 회차입니다. 목록·참석자 페이지에는 최신 것만 보입니다.</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <Button size="sm" variant="subtle" onClick={() => setShowDuplicates(v => !v)}>{showDuplicates ? '접기' : '숨긴 항목 보기'}</Button>
+                  <Button size="sm" variant="danger" onClick={() => setConfirmDedupe(true)}><Icon name="trash" className="w-3.5 h-3.5" />영구 삭제</Button>
+                </div>
+              </div>
+              {showDuplicates && (
+                <div className="mt-3 space-y-1.5 max-h-80 overflow-y-auto">
+                  {sortSessionsBySchedule(duplicates).map(s => (
+                    <div key={s.id} className="flex items-center gap-3 text-xs border border-ink-100 dark:border-ink-800 rounded-lg px-3 py-2">
+                      <span className="text-ink-400 dark:text-ink-500 whitespace-nowrap">{s.session_date} {s.time_range}</span>
+                      {s.room && <span className="text-ink-400 dark:text-ink-500 whitespace-nowrap">📍 {s.room}</span>}
+                      <span className="text-ink-700 dark:text-ink-200 font-semibold truncate">{s.name}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Card>
+          )}
 
           {/* 세션 목록 */}
           <div>
@@ -1093,6 +1276,12 @@
             message={confirmSession ? `"${confirmSession.name}" 세션을 삭제할까요? 세션과 연결된 Poll의 연결이 해제됩니다.` : ''}
             loading={deletingSession}
             onConfirm={doDeleteSession} onCancel={() => setConfirmSession(null)} />
+
+          {/* 중복 세션 영구 삭제 확인 */}
+          <ConfirmDialog open={confirmDedupe} title="중복 세션 삭제" tone="danger" confirmText="삭제"
+            message={`숨겨진 중복 세션 ${duplicates.length}개를 영구 삭제할까요? 중복에 연결된 Poll은 남아 있는 최신 세션으로 옮겨집니다. 예전 세션 QR/링크는 더 이상 열리지 않습니다.`}
+            loading={dedupeBusy}
+            onConfirm={doDedupe} onCancel={() => setConfirmDedupe(false)} />
 
           {/* 트랙 삭제 확인 */}
           <ConfirmDialog open={!!confirmTrack} title="트랙 삭제" tone="danger" confirmText="삭제"
@@ -1464,7 +1653,7 @@
           {tab === 'sessions' && (
             proj.loading ? <LoadingBlock /> :
             proj.error ? <ErrorBanner error={proj.error} onRetry={proj.refetch} /> :
-            proj.data ? <SessionsTab projectId={projectId} projectCode={proj.data.code} tracks={proj.data.tracks || []} sessions={proj.data.sessions || []} onChanged={() => proj.refetch().catch(() => {})} /> : null
+            proj.data ? <SessionsTab projectId={projectId} projectCode={proj.data.code} projectName={proj.data.name} tracks={proj.data.tracks || []} sessions={proj.data.sessions || []} duplicates={proj.data.duplicate_sessions || []} onChanged={() => proj.refetch().catch(() => {})} /> : null
           )}
 
           {tab === 'live' && (
