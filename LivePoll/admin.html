@@ -983,6 +983,8 @@
       const visibleGroups = selectedTrackId ? groups.filter(g => g.id === selectedTrackId) : groups;
 
       // 세션룸별 묶음 (선택 날짜 기준) — 룸 QR / 인쇄물의 원본
+      // 순서는 세션 등록(엑셀 업로드) 순서를 그대로 따른다. 가나다순으로 세우면
+      // "Atlas" 가 하모니볼룸들보다 앞으로 튀어나와 현장 배치와 어긋난다.
       const rooms = useMemo(() => {
         const src = selectedDate ? list.filter(s => s.session_date === selectedDate) : list;
         const map = new Map();
@@ -993,8 +995,7 @@
           map.get(r).push(s);
         });
         return [...map.entries()]
-          .map(([room, items]) => ({ room, items: sortSessionsBySchedule(items) }))
-          .sort((a, b) => a.room.localeCompare(b.room, 'ko'));
+          .map(([room, items]) => ({ room, items: sortSessionsBySchedule(items) }));
       }, [list, selectedDate]);
       // 룸 QR 은 날짜를 붙이지 않는다 — 참석자 화면이 시간표를 보고 그 시점의 세션을 자동으로 고른다.
       // (포스터 1장으로 행사 전 기간 사용 가능)

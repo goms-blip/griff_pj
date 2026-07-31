@@ -189,6 +189,7 @@ Poll: `GET /projects/:id/polls`, `GET /sessions/:id/polls`, `POST /projects/:id/
 - 룸별 버튼: `QR 보기`(모달) / `이미지`(고해상도 GIF 저장) / `인쇄`(A4 1장)
 - 상단 `인쇄용 전체 다운로드` → 룸마다 A4 1장씩 새 창에 렌더 후 인쇄 대화상자 자동 오픈. 대상을 **PDF로 저장**으로 바꾸면 그대로 PDF.
 - 포스터 구성: 행사명 / 룸 이름 / QR(92mm, 약 270dpi) / 안내문 / URL / 그 룸의 타임테이블(최대 14행).
+- **룸 나열 순서 = 세션 등록(엑셀 업로드) 순서의 첫 등장 순.** 가나다순이 아니다 — `Atlas` 가 `Harmony Ballroom 1~3` 앞으로 튀어나와 현장 배치와 어긋나기 때문. 순서를 바꾸려면 **엑셀의 행 순서를 바꿔서 다시 업로드**하면 된다(관리자 화면·참석자 룸 버튼·인쇄물에 모두 동일하게 반영).
 - **QR 에는 날짜를 넣지 않는다** — 포스터 1장으로 행사 전 기간을 커버한다. 링크 형식: `/#/e/{projectCode}?room={룸이름}`
 
 관련 코드: `admin.html` 의 `makeQR()`, `downloadQRImage()`, `openRoomQRPrint()`, `SessionsTab` 안의 `rooms` / `roomUrl` / `printRooms`.

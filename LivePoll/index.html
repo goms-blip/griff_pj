@@ -808,13 +808,15 @@
         return () => clearInterval(id);
       }, []);
 
+      // 룸 순서 = 세션 등록(엑셀 업로드) 순서의 첫 등장 순.
+      // 가나다순으로 세우면 "Atlas" 가 하모니볼룸들보다 앞에 와서 현장 배치와 어긋난다.
       const rooms = useMemo(() => {
         const seen = new Map();
         (data.sessions || []).forEach(s => {
           const r = String(s.room || '').trim();
           if (r && !seen.has(roomKeyOf(r))) seen.set(roomKeyOf(r), r);
         });
-        return [...seen.values()].sort((a, b) => a.localeCompare(b, 'ko'));
+        return [...seen.values()];
       }, [data.sessions]);
 
       const items = useMemo(() => sortSessionsBySchedule(
@@ -978,10 +980,10 @@
       }
 
       const live = (data.livePolls || []).filter(p => p.status === 'live');
-      // 행사에 등록된 세션룸 목록 (중복 제거 · 가나다순)
+      // 행사에 등록된 세션룸 목록 (중복 제거 · 세션 등록 순서 유지)
       const allRooms = [...new Map((data.sessions || [])
         .map(s => String(s.room || '').trim()).filter(Boolean)
-        .map(r => [roomKeyOf(r), r])).values()].sort((a, b) => a.localeCompare(b, 'ko'));
+        .map(r => [roomKeyOf(r), r])).values()];
       const visibleGroups = selectedTrack ? groups.filter(g => g.key === selectedTrack) : groups;
       const totalInView = groups.reduce((n, g) => n + g.items.length, 0);
       const pill = (active) => `px-3 py-1.5 rounded-full text-xs font-semibold transition whitespace-nowrap ${active ? 'bg-accent-600 text-white' : 'bg-ink-100 dark:bg-ink-800 text-ink-600 dark:text-ink-300'}`;
