@@ -1481,6 +1481,9 @@
       const copy = useClipboard();
       const toast = useToast();
       const canvasRefs = useRef({});
+      // SVG 를 '룸 이름 없이 QR 만' 으로 뽑는 옵션.
+      //  인쇄물 디자인을 따로 하는 경우(현수막·안내판에 룸 이름이 이미 있는 경우) 라벨이 방해가 된다.
+      const [svgBare, setSvgBare] = useState(false);
       const [error, setError] = useState('');
 
       useEffect(() => {
@@ -1519,7 +1522,8 @@
       //  라이브러리가 만든 QR 도형(path)만 뽑아, 룸 이름을 붙인 새 SVG 로 감싼다.
       //  물리 크기를 mm 로 박아 인쇄 결과를 예측 가능하게 한다(QR 폭 70mm — 현장 스캔에 충분).
       //  viewBox 는 모듈 격자 단위라 텍스트 크기도 QR 버전(격자 크기)에 비례해 따라간다.
-      const buildRoomSvg = (url, roomName) => new Promise((resolve, reject) => {
+      //  bare=true 면 라벨 없이 QR 만(정사각). 인쇄물에 룸 이름을 따로 얹는 경우용.
+      const buildRoomSvg = (url, roomName, { bare = false } = {}) => new Promise((resolve, reject) => {
         if (!window.QRCode || typeof window.QRCode.toString !== 'function') {
           return reject(new Error('QR 라이브러리를 불러오지 못했습니다.'));
         }
@@ -1531,18 +1535,24 @@
           const vb = /viewBox="0 0 ([\d.]+)/.exec(svg);
           const n = vb ? Number(vb[1]) : 29;                 // 모듈 격자 한 변(여백 포함)
           const inner = svg.replace(/^[\s\S]*?<svg[^>]*>/, '').replace(/<\/svg>[\s\S]*$/, '');
-          const labelH = n * 0.34;
-          const total = n + labelH;
-          const mmW = 70;
-          const mmH = +(mmW * total / n).toFixed(2);
           const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
-          const cx = (n / 2).toFixed(2);
-          resolve(
+          const mmW = 70;
+          const head = (h, vbH) =>
 `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="${mmW}mm" height="${mmH}mm" viewBox="0 0 ${n} ${total.toFixed(2)}" shape-rendering="crispEdges">
+<svg xmlns="http://www.w3.org/2000/svg" width="${mmW}mm" height="${h}mm" viewBox="0 0 ${n} ${vbH}" shape-rendering="crispEdges">
   <title>${esc(roomName)} — LiveQnA 룸 QR</title>
   <rect width="100%" height="100%" fill="#ffffff"/>
-${inner}
+${inner}`;
+
+          if (bare) {
+            // QR 만 — 정사각 70×70mm. 텍스트가 없으니 폰트 대체 문제도 없다.
+            return resolve(`${head(mmW, n)}\n</svg>`);
+          }
+          const labelH = n * 0.34;
+          const total = n + labelH;
+          const cx = (n / 2).toFixed(2);
+          resolve(
+`${head(+(mmW * total / n).toFixed(2), total.toFixed(2))}
   <g shape-rendering="auto" text-anchor="middle" font-family="Pretendard, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif">
     <text x="${cx}" y="${(n + labelH * 0.48).toFixed(2)}" font-size="${(n * 0.075).toFixed(2)}" font-weight="700" fill="#0e1013">${esc(roomName)}</text>
     <text x="${cx}" y="${(n + labelH * 0.82).toFixed(2)}" font-size="${(n * 0.05).toFixed(2)}" fill="#6b7280">QR 을 스캔해 질문을 남겨주세요</text>
@@ -1553,9 +1563,11 @@ ${inner}
 
       const downloadSvg = async (room) => {
         try {
-          const svg = await buildRoomSvg(buildRoomUrl(project, room), room.name);
-          saveBlob(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }), `QR_${safeName(room.name)}.svg`);
-          toast.show(`${room.name} SVG 를 저장했습니다`, 'success');
+          const svg = await buildRoomSvg(buildRoomUrl(project, room), room.name, { bare: svgBare });
+          // 파일명으로 두 형태를 구분 — 인쇄소에 섞여 넘어가는 사고 방지
+          const name = `QR_${safeName(room.name)}${svgBare ? '_qr-only' : ''}.svg`;
+          saveBlob(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }), name);
+          toast.show(`${room.name} SVG 를 저장했습니다${svgBare ? ' (QR 만)' : ''}`, 'success');
         } catch (e) {
           toast.show('SVG 저장에 실패했습니다', 'error');
         }
@@ -1643,18 +1655,32 @@ ${inner}
                 })}
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-4">
+              {/* SVG 출력 형태 선택 — 두 형태를 파일명으로도 구분한다(_qr-only) */}
+              <label className="flex items-start gap-2.5 cursor-pointer select-none mt-4 border border-ink-200 dark:border-ink-800 rounded-md px-3 py-2.5">
+                <input type="checkbox" checked={svgBare}
+                  onChange={(e) => setSvgBare(e.target.checked)}
+                  style={{ accentColor: '#236d70' }}
+                  className="w-5 h-5 rounded mt-0.5 shrink-0" />
+                <span className="text-sm text-ink-700 dark:text-ink-300">
+                  SVG 는 <span className="font-semibold">QR 만</span> 저장 (룸 이름·안내문 없이 정사각 70×70mm)
+                  <span className="block text-xs text-ink-400 dark:text-ink-500 mt-0.5">
+                    인쇄물에 룸 이름을 따로 넣는 경우에 쓰세요. 글자가 없어 인쇄소 폰트 문제도 없습니다.
+                  </span>
+                </span>
+              </label>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-3">
                 <Button variant="secondary" onClick={downloadAll}>
                   <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" /></svg>
                   전체 PNG ({rooms.length}장)
                 </Button>
                 <Button variant="secondary" onClick={downloadAllSvg}>
                   <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" /></svg>
-                  전체 SVG ({rooms.length}장)
+                  전체 SVG ({rooms.length}장){svgBare ? ' · QR 만' : ''}
                 </Button>
               </div>
               <p className="text-xs text-ink-400 dark:text-ink-500 mt-2 text-center">
-                인쇄물에는 <span className="font-semibold">SVG</span> 를 쓰세요 — 벡터라 크게 뽑아도 깨지지 않습니다(기본 QR 폭 70mm).
+                인쇄물에는 <span className="font-semibold">SVG</span> 를 쓰세요 — 벡터라 크게 뽑아도 깨지지 않습니다(QR 폭 70mm).
                 PNG 는 슬라이드·메신저 공유용입니다.
               </p>
             </div>
