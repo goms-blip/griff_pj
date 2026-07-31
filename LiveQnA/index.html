@@ -1504,7 +1504,64 @@
         return () => cancelAnimationFrame(id);
       }, [isOpen, rooms, project]);
 
-      // QR 캔버스 + 룸 이름을 한 장의 PNG 로 합성해 저장(인쇄용).
+      // 파일명에 못 쓰는 문자 제거
+      const safeName = (s) => String(s || 'room').replace(/[\\/:*?"<>|]/g, '_');
+
+      const saveBlob = (blob, filename) => {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = filename;
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      };
+
+      // 🖨 인쇄용 SVG — 벡터라 A4든 현수막이든 키워도 안 깨진다.
+      //  라이브러리가 만든 QR 도형(path)만 뽑아, 룸 이름을 붙인 새 SVG 로 감싼다.
+      //  물리 크기를 mm 로 박아 인쇄 결과를 예측 가능하게 한다(QR 폭 70mm — 현장 스캔에 충분).
+      //  viewBox 는 모듈 격자 단위라 텍스트 크기도 QR 버전(격자 크기)에 비례해 따라간다.
+      const buildRoomSvg = (url, roomName) => new Promise((resolve, reject) => {
+        if (!window.QRCode || typeof window.QRCode.toString !== 'function') {
+          return reject(new Error('QR 라이브러리를 불러오지 못했습니다.'));
+        }
+        window.QRCode.toString(url, {
+          type: 'svg', margin: 2, errorCorrectionLevel: 'M',
+          color: { dark: '#0e1013', light: '#ffffff' },
+        }, (err, svg) => {
+          if (err) return reject(err);
+          const vb = /viewBox="0 0 ([\d.]+)/.exec(svg);
+          const n = vb ? Number(vb[1]) : 29;                 // 모듈 격자 한 변(여백 포함)
+          const inner = svg.replace(/^[\s\S]*?<svg[^>]*>/, '').replace(/<\/svg>[\s\S]*$/, '');
+          const labelH = n * 0.34;
+          const total = n + labelH;
+          const mmW = 70;
+          const mmH = +(mmW * total / n).toFixed(2);
+          const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+          const cx = (n / 2).toFixed(2);
+          resolve(
+`<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="${mmW}mm" height="${mmH}mm" viewBox="0 0 ${n} ${total.toFixed(2)}" shape-rendering="crispEdges">
+  <title>${esc(roomName)} — LiveQnA 룸 QR</title>
+  <rect width="100%" height="100%" fill="#ffffff"/>
+${inner}
+  <g shape-rendering="auto" text-anchor="middle" font-family="Pretendard, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif">
+    <text x="${cx}" y="${(n + labelH * 0.48).toFixed(2)}" font-size="${(n * 0.075).toFixed(2)}" font-weight="700" fill="#0e1013">${esc(roomName)}</text>
+    <text x="${cx}" y="${(n + labelH * 0.82).toFixed(2)}" font-size="${(n * 0.05).toFixed(2)}" fill="#6b7280">QR 을 스캔해 질문을 남겨주세요</text>
+  </g>
+</svg>`);
+        });
+      });
+
+      const downloadSvg = async (room) => {
+        try {
+          const svg = await buildRoomSvg(buildRoomUrl(project, room), room.name);
+          saveBlob(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }), `QR_${safeName(room.name)}.svg`);
+          toast.show(`${room.name} SVG 를 저장했습니다`, 'success');
+        } catch (e) {
+          toast.show('SVG 저장에 실패했습니다', 'error');
+        }
+      };
+
+      // QR 캔버스 + 룸 이름을 한 장의 PNG 로 합성해 저장.
       const download = (room) => {
         const src = canvasRefs.current[room.no];
         if (!src) return;
@@ -1526,7 +1583,7 @@
           ctx.fillText('QR 을 스캔해 질문을 남겨주세요', out.width / 2, src.height + pad + 46);
           const a = document.createElement('a');
           a.href = out.toDataURL('image/png');
-          a.download = `QR_${room.name.replace(/[\\/:*?"<>|]/g, '_')}.png`;
+          a.download = `QR_${safeName(room.name)}.png`;
           document.body.appendChild(a); a.click(); document.body.removeChild(a);
           toast.show(`${room.name} QR 을 저장했습니다`, 'success');
         } catch (e) {
@@ -1534,7 +1591,9 @@
         }
       };
 
+      // 브라우저가 연속 다운로드를 차단하지 않도록 간격을 둔다.
       const downloadAll = () => (rooms || []).forEach((r, i) => setTimeout(() => download(r), i * 300));
+      const downloadAllSvg = () => (rooms || []).forEach((r, i) => setTimeout(() => downloadSvg(r), i * 300));
 
       return (
         <Modal isOpen={isOpen} onClose={onClose} title="룸 QR" size="xl">
@@ -1568,9 +1627,11 @@
                         <canvas ref={(el) => { canvasRefs.current[r.no] = el; }} width={200} height={200} className="block" />
                       </div>
                       <div className="w-full mt-3 text-[11px] font-mono text-ink-500 dark:text-ink-400 break-all text-center">{url}</div>
-                      <div className="w-full mt-3 grid grid-cols-2 gap-2">
-                        <Button variant="subtle" size="sm" onClick={() => copy(url, `${r.name} URL 복사됨`)}>URL 복사</Button>
+                      <div className="w-full mt-3 grid grid-cols-3 gap-2">
+                        <Button variant="subtle" size="sm" onClick={() => copy(url, `${r.name} URL 복사됨`)}>URL</Button>
                         <Button variant="secondary" size="sm" onClick={() => download(r)}>PNG</Button>
+                        <Button variant="secondary" size="sm" title="인쇄용 벡터 (70mm, 확대해도 안 깨짐)"
+                          onClick={() => downloadSvg(r)}>SVG</Button>
                       </div>
                       <button type="button"
                         onClick={() => window.open(buildRoomAdminUrl(project, r), '_blank', 'noopener,noreferrer')}
@@ -1582,10 +1643,20 @@
                 })}
               </div>
 
-              <Button variant="secondary" className="w-full mt-4" onClick={downloadAll}>
-                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" /></svg>
-                전체 PNG 다운로드 ({rooms.length}장)
-              </Button>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-4">
+                <Button variant="secondary" onClick={downloadAll}>
+                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" /></svg>
+                  전체 PNG ({rooms.length}장)
+                </Button>
+                <Button variant="secondary" onClick={downloadAllSvg}>
+                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" /></svg>
+                  전체 SVG ({rooms.length}장)
+                </Button>
+              </div>
+              <p className="text-xs text-ink-400 dark:text-ink-500 mt-2 text-center">
+                인쇄물에는 <span className="font-semibold">SVG</span> 를 쓰세요 — 벡터라 크게 뽑아도 깨지지 않습니다(기본 QR 폭 70mm).
+                PNG 는 슬라이드·메신저 공유용입니다.
+              </p>
             </div>
           )}
         </Modal>
