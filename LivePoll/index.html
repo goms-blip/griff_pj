@@ -36,6 +36,9 @@
   <style>
     html { -webkit-tap-highlight-color: transparent; }
     html, body { -webkit-tap-highlight-color: transparent; }
+    /* 한글 어절 중간에서 줄바꿈되지 않게. 긴 URL/영문은 overflow-wrap 으로 흘린다.
+       강제로 끊어야 하는 곳은 Tailwind break-all 이 그대로 덮어쓴다. */
+    body { word-break: keep-all; overflow-wrap: break-word; }
     body, body * { transition-property: background-color, border-color, color, fill, stroke; transition-duration: 200ms; transition-timing-function: ease; }
     @keyframes barGrow { from { width: 0; } }
     .bar-anim { animation: barGrow 0.7s cubic-bezier(.22,1,.36,1); }

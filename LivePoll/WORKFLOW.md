@@ -106,6 +106,12 @@ PRD: `live_poll_prd.md` 기반. 기존 Q&A 솔루션(projects/sessions/tracks + 
    - **잔여 사항(Low, 미조치)**: 관리자 콘솔에서 generate-day 설문 편집 시 관리자 상세 응답/저장 payload에 `required`가 왕복되지 않아 rating의 `required=false`가 유실되고 전부 필수로 회귀(`server.js:1184`, `admin.html:2235`).
    - 커밋 안 함(워킹트리만).
 
+### 2026-08-04
+1. **요청**: 유저 / 관리자 페이지에 `word-break: keep-all` 적용.
+   - **조치**: 두 페이지의 `<style>` 블록 `body` 규칙에 `word-break: keep-all; overflow-wrap: break-word;` 추가 — `index.html`, `admin.html`.
+   - **근거**: keep-all 은 상속되므로 `body` 한 줄로 전 페이지에 적용된다. `overflow-wrap: break-word` 를 같이 둬야 긴 URL·영문이 컨테이너를 넘치지 않는다. `break-all` 클래스(예: `admin.html` QR URL)는 특이도가 높아 그대로 유지된다.
+   - 커밋 안 함(워킹트리만).
+
 ## 산출물
 
 | 파일 | 역할 |

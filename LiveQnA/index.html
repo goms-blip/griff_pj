@@ -69,6 +69,9 @@
     /* Tailwind으로 표현하기 어려운 부분만 최소한으로 작성 */
     html { -webkit-tap-highlight-color: transparent; }
     body { font-feature-settings: 'cv11', 'ss01'; }
+    /* 한글 어절 중간에서 줄이 끊기지 않게. 긴 URL/영문은 overflow-wrap 으로 흘려보낸다.
+       URL 표시처럼 강제로 끊어야 하는 곳은 Tailwind break-all 이 그대로 덮어쓴다. */
+    body { word-break: keep-all; overflow-wrap: break-word; }
     /* 라이트/다크 전환을 부드럽게 */
     body, body * {
       transition-property: background-color, border-color, color, fill, stroke;
