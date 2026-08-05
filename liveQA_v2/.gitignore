@@ -1,0 +1,14 @@
+# 시크릿 — 값은 .env.local 또는 배포 플랫폼 환경변수로만 주입한다
+.env
+.env.local
+.env.*.local
+!.env.example
+
+node_modules/
+.vercel
+.DS_Store
+*.log
+
+# 운영 문서(AUDIT/HANDOVER/WORKFLOW 등)는 이 폴더에 두지 않는다
+*.md
+!.env.example

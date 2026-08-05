@@ -1,0 +1,18 @@
+# 배포에 불필요/민감 파일 제외 (env는 Vercel 프로젝트 환경변수로 설정)
+.env
+.env.local
+.env.*.local
+*.sql
+*.md
+.claude/
+.playwright-mcp/
+.git/
+.DS_Store
+realtime_event_qna_prd_supabase_mvp_v2.md
+WORKFLOW.md
+
+# 로컬 전용 운영 스크립트 — 서버가 부르지 않으므로 배포에 포함할 필요가 없다.
+#  특히 import_from_qa.js 는 ../QA/.env.local(운영 키)을 읽으므로 절대 올리지 않는다.
+verify_setup.js
+seed_test_data.js
+import_from_qa.js
